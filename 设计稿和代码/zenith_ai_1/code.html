@@ -1,0 +1,227 @@
+<!DOCTYPE html><html lang="zh-CN" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Zenith AI - 智能助手</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@500;600&amp;family=Noto+Sans+SC:wght@400;500&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary": "#ffffff",
+                        "surface-container-low": "#f3f4f5",
+                        "primary-fixed-dim": "#bdc7db",
+                        "on-primary-fixed": "#121c2a",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed-dim": "#c0c7d6",
+                        "surface-container-lowest": "#ffffff",
+                        "tertiary-container": "#4e3e25",
+                        "error-container": "#ffdad6",
+                        "on-primary-fixed-variant": "#3d4757",
+                        "on-surface-variant": "#44474c",
+                        "on-secondary-fixed": "#151c27",
+                        "on-error": "#ffffff",
+                        "surface-container": "#edeeef",
+                        "background": "#f8f9fa",
+                        "surface": "#f8f9fa",
+                        "secondary-fixed": "#dce2f3",
+                        "secondary": "#585f6c",
+                        "tertiary": "#362811",
+                        "on-background": "#191c1d",
+                        "surface-variant": "#e1e3e4",
+                        "outline": "#75777d",
+                        "primary-container": "#374151",
+                        "on-secondary-container": "#5e6572",
+                        "surface-dim": "#d9dadb",
+                        "inverse-surface": "#2e3132",
+                        "error": "#ba1a1a",
+                        "surface-tint": "#555f70",
+                        "tertiary-fixed-dim": "#dbc3a2",
+                        "on-tertiary-container": "#c0a989",
+                        "surface-bright": "#f8f9fa",
+                        "surface-container-high": "#e7e8e9",
+                        "surface-container-highest": "#e1e3e4",
+                        "inverse-on-surface": "#f0f1f2",
+                        "on-tertiary-fixed": "#261905",
+                        "on-tertiary-fixed-variant": "#55442b",
+                        "tertiary-fixed": "#f8dfbc",
+                        "on-primary": "#ffffff",
+                        "secondary-container": "#dce2f3",
+                        "inverse-primary": "#bdc7db",
+                        "on-secondary": "#ffffff",
+                        "primary-fixed": "#d9e3f7",
+                        "on-secondary-fixed-variant": "#404754",
+                        "on-primary-container": "#a3adc0",
+                        "on-surface": "#191c1d",
+                        "primary": "#212b3a",
+                        "outline-variant": "#c5c6cc"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "stack-tight": "4px",
+                        "element-gap": "16px",
+                        "unit": "8px",
+                        "container-padding": "32px"
+                    },
+                    "fontFamily": {
+                        "display-lg": ["Hanken Grotesk"],
+                        "label-sm": ["Hanken Grotesk"],
+                        "title-sm": ["Noto Sans SC"],
+                        "body-md": ["Noto Sans SC"],
+                        "body-lg": ["Noto Sans SC"],
+                        "headline-md": ["Hanken Grotesk"]
+                    },
+                    "fontSize": {
+                        "display-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                        "label-sm": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500"}],
+                        "title-sm": ["18px", {"lineHeight": "26px", "fontWeight": "500"}],
+                        "body-md": ["14px", {"lineHeight": "22px", "fontWeight": "400"}],
+                        "body-lg": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "500"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { background-color: #f8f9fa; }
+        .wave-line {
+            width: 2px;
+            background-color: #374151;
+            border-radius: 9999px;
+            margin: 0 4px;
+            animation: wave 1.2s ease-in-out infinite alternate;
+        }
+        @keyframes wave {
+            0% { height: 10px; }
+            100% { height: 60px; }
+        }
+        .wave-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100px;
+        }
+        
+        .wave-line:nth-child(1) { animation-delay: 0.0s; height: 15px; }
+        .wave-line:nth-child(2) { animation-delay: 0.1s; height: 30px; }
+        .wave-line:nth-child(3) { animation-delay: 0.2s; height: 45px; }
+        .wave-line:nth-child(4) { animation-delay: 0.3s; height: 60px; }
+        .wave-line:nth-child(5) { animation-delay: 0.4s; height: 40px; }
+        .wave-line:nth-child(6) { animation-delay: 0.5s; height: 50px; }
+        .wave-line:nth-child(7) { animation-delay: 0.6s; height: 35px; }
+        .wave-line:nth-child(8) { animation-delay: 0.7s; height: 20px; }
+        .wave-line:nth-child(9) { animation-delay: 0.8s; height: 45px; }
+        .wave-line:nth-child(10) { animation-delay: 0.9s; height: 25px; }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden text-on-surface bg-background">
+<!-- SideNavBar -->
+<nav class="hidden md:flex flex-col h-full p-unit gap-element-gap bg-surface-container-lowest border-r border-outline-variant w-64 docked left-0">
+<div class="px-4 py-6 mb-4">
+<h1 class="font-display-lg text-display-lg text-primary font-bold">Zenith AI</h1>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">智能助手</p>
+</div>
+<button class="bg-primary-container text-on-primary hover:bg-primary transition-colors py-3 px-4 rounded-lg flex items-center justify-center gap-2 mx-2 mb-6">
+<span class="material-symbols-outlined" data-icon="add" style="font-variation-settings: &quot;FILL&quot; 0;">add</span>
+<span class="font-title-sm text-title-sm">新建对话</span>
+</button>
+<div class="flex flex-col gap-2 px-2 flex-grow"><!-- Active Tab: 对话 -->
+<a class="flex items-center gap-3 px-4 py-3 text-primary font-semibold bg-surface-container-high rounded-lg opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="chat_bubble" style="font-variation-settings: 'FILL' 1;">chat_bubble</span>
+<span class="font-title-sm text-title-sm">对话</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:bg-surface-container transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="assignment" style="font-variation-settings: 'FILL' 0;">assignment</span>
+<span class="font-title-sm text-title-sm">任务</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:bg-surface-container transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="database" style="font-variation-settings: 'FILL' 0;">database</span>
+<span class="font-title-sm text-title-sm">知识库</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:bg-surface-container transition-all rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="settings" style="font-variation-settings: 'FILL' 0;">settings</span>
+<span class="font-title-sm text-title-sm">设置</span>
+</a></div>
+<div class="mt-auto border-t border-outline-variant px-4 py-6 flex items-center gap-3">
+  <div class="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center">
+    <span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 0;">account_circle</span>
+  </div>
+  <div class="flex flex-col">
+    <span class="font-title-sm text-title-sm text-primary">Admin User</span>
+  </div>
+</div></nav>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col h-full bg-surface">
+<!-- TopAppBar -->
+<header class="flex justify-between items-center w-full px-container-padding h-16 bg-surface docked full-width top-0">
+<div class="md:hidden">
+<h1 class="font-display-lg text-display-lg font-bold text-primary">Zenith AI</h1>
+</div>
+<div class="flex-1"></div> <!-- Spacer -->
+<div class="flex items-center">
+<button class="p-2 text-primary hover:bg-surface-container-low transition-colors rounded-full active:scale-95 duration-200">
+<span class="material-symbols-outlined" data-icon="account_circle" style="font-variation-settings: &quot;FILL&quot; 0;">account_circle</span>
+</button>
+</div>
+</header>
+<!-- Central Interaction Area -->
+<div class="flex-1 overflow-y-auto flex flex-col items-center pb-32">
+<div class="w-full max-w-3xl px-6 py-8 flex flex-col gap-6 mt-8">
+<!-- AI Welcome Message -->
+<div class="flex items-start gap-4">
+<div class="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center flex-shrink-0 border border-outline-variant">
+<span class="material-symbols-outlined text-primary" data-icon="smart_toy">smart_toy</span>
+</div>
+<div class="bg-surface-container-lowest border border-outline-variant p-5 rounded-lg shadow-sm w-full">
+<p class="font-body-lg text-body-lg text-on-surface">您好。我已准备就绪，可以协助您处理今天的任务。请随时开始对话。</p>
+</div>
+</div>
+<!-- User History Bubble -->
+<div class="flex items-start gap-4 flex-row-reverse">
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center flex-shrink-0 text-on-primary">
+<span class="material-symbols-outlined" data-icon="person">person</span>
+</div>
+<div class="bg-primary-container p-5 rounded-lg w-auto max-w-[80%]">
+<p class="font-body-lg text-body-lg text-on-primary">帮我总结一下昨天会议的关键点，并更新到任务列表里。</p>
+</div>
+</div>
+</div>
+<!-- Voice Interaction Area -->
+<div class="mt-auto mb-12 flex flex-col items-center w-full max-w-2xl px-6">
+<div class="wave-container mb-6">
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+<div class="wave-line"></div>
+</div>
+<div class="flex items-center gap-2 mb-8">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+<span class="font-body-md text-body-md text-secondary">正在倾听...</span>
+</div>
+<!-- Voice Button -->
+<button class="w-20 h-20 rounded-full bg-surface-container-lowest border border-outline-variant flex items-center justify-center shadow-[0_10px_30px_rgba(0,0,0,0.04)] hover:bg-surface-container-low transition-colors group">
+<span class="material-symbols-outlined text-3xl text-primary group-hover:scale-110 transition-transform" data-icon="mic" style="font-variation-settings: &quot;FILL&quot; 1;">mic</span>
+</button>
+</div>
+</div>
+</main>
+
+
+</body></html>

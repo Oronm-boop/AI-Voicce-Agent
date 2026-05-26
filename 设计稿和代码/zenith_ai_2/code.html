@@ -1,0 +1,316 @@
+<!DOCTYPE html><html lang="zh-CN" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Zenith AI - 任务执行看板</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@500;600&amp;family=Noto+Sans+SC:wght@400;500&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary": "#ffffff",
+                        "surface-container-low": "#f3f4f5",
+                        "primary-fixed-dim": "#bdc7db",
+                        "on-primary-fixed": "#121c2a",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed-dim": "#c0c7d6",
+                        "surface-container-lowest": "#ffffff",
+                        "tertiary-container": "#4e3e25",
+                        "error-container": "#ffdad6",
+                        "on-primary-fixed-variant": "#3d4757",
+                        "on-surface-variant": "#44474c",
+                        "on-secondary-fixed": "#151c27",
+                        "on-error": "#ffffff",
+                        "surface-container": "#edeeef",
+                        "background": "#f8f9fa",
+                        "surface": "#f8f9fa",
+                        "secondary-fixed": "#dce2f3",
+                        "secondary": "#585f6c",
+                        "tertiary": "#362811",
+                        "on-background": "#191c1d",
+                        "surface-variant": "#e1e3e4",
+                        "outline": "#75777d",
+                        "primary-container": "#374151",
+                        "on-secondary-container": "#5e6572",
+                        "surface-dim": "#d9dadb",
+                        "inverse-surface": "#2e3132",
+                        "error": "#ba1a1a",
+                        "surface-tint": "#555f70",
+                        "tertiary-fixed-dim": "#dbc3a2",
+                        "on-tertiary-container": "#c0a989",
+                        "surface-bright": "#f8f9fa",
+                        "surface-container-high": "#e7e8e9",
+                        "surface-container-highest": "#e1e3e4",
+                        "inverse-on-surface": "#f0f1f2",
+                        "on-tertiary-fixed": "#261905",
+                        "on-tertiary-fixed-variant": "#55442b",
+                        "tertiary-fixed": "#f8dfbc",
+                        "on-primary": "#ffffff",
+                        "secondary-container": "#dce2f3",
+                        "inverse-primary": "#bdc7db",
+                        "on-secondary": "#ffffff",
+                        "primary-fixed": "#d9e3f7",
+                        "on-secondary-fixed-variant": "#404754",
+                        "on-primary-container": "#a3adc0",
+                        "on-surface": "#191c1d",
+                        "primary": "#212b3a",
+                        "outline-variant": "#c5c6cc"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "stack-tight": "4px",
+                        "element-gap": "16px",
+                        "unit": "8px",
+                        "container-padding": "32px"
+                    },
+                    "fontFamily": {
+                        "display-lg": ["Hanken Grotesk"],
+                        "label-sm": ["Hanken Grotesk"],
+                        "title-sm": ["Noto Sans SC"],
+                        "body-md": ["Noto Sans SC"],
+                        "body-lg": ["Noto Sans SC"],
+                        "headline-md": ["Hanken Grotesk"]
+                    },
+                    "fontSize": {
+                        "display-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "label-sm": ["12px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "title-sm": ["18px", { "lineHeight": "26px", "fontWeight": "500" }],
+                        "body-md": ["14px", { "lineHeight": "22px", "fontWeight": "400" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: #f8f9fa; /* bg-background */
+        }
+        /* Custom scrollbar for Kanban columns */
+        .kanban-col::-webkit-scrollbar {
+            width: 4px;
+        }
+        .kanban-col::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .kanban-col::-webkit-scrollbar-thumb {
+            background-color: #e1e3e4; /* surface-variant */
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden text-on-surface font-body-md bg-background">
+<!-- SideNavBar -->
+<nav class="hidden md:flex flex-col h-full p-unit gap-element-gap bg-surface-container-lowest border-r border-outline-variant docked left-0 h-full w-64 z-20">
+<!-- Header -->
+<div class="px-container-padding py-6 flex items-center gap-3">
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-on-primary">
+<span class="material-symbols-outlined" data-icon="auto_awesome" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+</div>
+<div>
+<h1 class="font-display-lg text-display-lg text-primary text-[24px] leading-tight">Zenith AI</h1>
+<p class="font-label-sm text-label-sm text-on-surface-variant">智能助手</p>
+</div>
+</div>
+<!-- CTA -->
+<div class="px-4 mb-4">
+<button class="w-full bg-primary-container text-on-primary rounded-lg py-3 flex items-center justify-center gap-2 hover:bg-on-primary-fixed-variant transition-colors">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+<span class="font-title-sm text-title-sm text-[14px]">新建对话</span>
+</button>
+</div>
+<!-- Navigation Links -->
+<div class="flex-1 px-2 space-y-1"><a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container transition-all" href="#"><span class="material-symbols-outlined" data-icon="chat_bubble">chat_bubble</span><span class="font-title-sm text-title-sm text-[16px]">对话</span></a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-primary font-semibold bg-surface-container-high transition-all opacity-80" href="#">
+<span class="material-symbols-outlined" data-icon="assignment" style="font-variation-settings: 'FILL' 1;">assignment</span>
+<span class="font-title-sm text-title-sm text-[16px]">任务</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="database">database</span>
+<span class="font-title-sm text-title-sm text-[16px]">知识库</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:bg-surface-container transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-title-sm text-title-sm text-[16px]">设置</span>
+</a></div>
+<div class="mt-auto border-t border-outline-variant pt-4 px-4 pb-2 flex items-center gap-3">
+    <div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant">
+        <span class="material-symbols-outlined" data-icon="account_circle">account_circle</span>
+    </div>
+    <div class="flex flex-col">
+        <span class="font-label-sm text-label-sm text-primary font-semibold">Admin User</span>
+        <span class="font-label-sm text-[10px] text-on-surface-variant">admin@zenith.ai</span>
+    </div>
+</div></nav>
+<!-- Main Content Area -->
+<div class="flex-1 flex flex-col h-full overflow-hidden relative z-10">
+<!-- TopAppBar (Mobile Only or responsive header) -->
+<header class="flex justify-between items-center w-full px-container-padding h-16 bg-surface border-b border-outline-variant md:hidden">
+<div class="font-display-lg text-display-lg font-bold text-primary text-[20px]">Zenith AI</div>
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="account_circle">account_circle</span>
+</div>
+</header>
+<!-- Kanban Board Area -->
+<main class="flex-1 overflow-x-auto p-container-padding pb-[80px]">
+<!-- Page Header -->
+<div class="mb-gutter">
+<h2 class="font-headline-md text-headline-md text-primary">任务执行看板</h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">AI 代理当前正在处理及计划中的工作流</p>
+</div>
+<!-- Kanban Grid -->
+<div class="flex gap-gutter h-[calc(100%-80px)] min-w-[900px]">
+<!-- Column 1: 待执行 (To Do) -->
+<div class="flex-1 flex flex-col bg-surface-container-lowest rounded-xl border border-surface-variant p-4">
+<div class="flex items-center justify-between mb-4 pb-2 border-b border-surface-variant">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-outline"></div>
+<h3 class="font-title-sm text-title-sm text-on-surface">待执行</h3>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant bg-surface-container px-2 py-0.5 rounded-full">3</span>
+</div>
+<div class="flex-1 overflow-y-auto kanban-col space-y-4 pr-2">
+<!-- Task Card -->
+<div class="bg-surface rounded-lg border border-surface-variant p-4 hover:bg-surface-container-lowest transition-colors cursor-pointer group shadow-[0px_2px_4px_rgba(0,0,0,0.02)] hover:shadow-[0px_4px_12px_rgba(0,0,0,0.05)]">
+<div class="flex justify-between items-start mb-3">
+<span class="font-label-sm text-label-sm text-on-surface-variant bg-surface-container-high px-2 py-1 rounded-md">文本处理</span>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors text-[20px]" data-icon="more_horiz">more_horiz</span>
+</div>
+<h4 class="font-title-sm text-title-sm text-on-surface mb-2">整理今日会议摘要</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-[13px] line-clamp-2 mb-4">提取产品战略会议中的关键决策点和后续行动项，生成结构化文档。</p>
+<div class="flex items-center justify-between mt-auto pt-3 border-t border-surface-variant">
+<div class="flex -space-x-2">
+<div class="w-6 h-6 rounded-full bg-primary-container text-on-primary flex items-center justify-center text-[10px] border border-surface">AI</div>
+</div>
+<span class="font-label-sm text-label-sm text-outline flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]" data-icon="schedule">schedule</span> 今天
+                                </span>
+</div>
+</div>
+<!-- Task Card -->
+<div class="bg-surface rounded-lg border border-surface-variant p-4 hover:bg-surface-container-lowest transition-colors cursor-pointer group shadow-[0px_2px_4px_rgba(0,0,0,0.02)] hover:shadow-[0px_4px_12px_rgba(0,0,0,0.05)]">
+<div class="flex justify-between items-start mb-3">
+<span class="font-label-sm text-label-sm text-on-error-container bg-error-container px-2 py-1 rounded-md">高优先级</span>
+<span class="material-symbols-outlined text-outline-variant group-hover:text-primary transition-colors text-[20px]" data-icon="more_horiz">more_horiz</span>
+</div>
+<h4 class="font-title-sm text-title-sm text-on-surface mb-2">预定上海机票</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-[13px] line-clamp-2 mb-4">搜索并预定下周二前往上海的早班机票，优选东航。</p>
+<div class="flex items-center justify-between mt-auto pt-3 border-t border-surface-variant">
+<div class="flex -space-x-2">
+<div class="w-6 h-6 rounded-full bg-primary-container text-on-primary flex items-center justify-center text-[10px] border border-surface">AI</div>
+</div>
+<span class="font-label-sm text-label-sm text-outline flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]" data-icon="schedule">schedule</span> 明天
+                                </span>
+</div>
+</div>
+</div>
+</div>
+<!-- Column 2: 执行中 (In Progress) -->
+<div class="flex-1 flex flex-col bg-surface-container-lowest rounded-xl border border-surface-variant p-4">
+<div class="flex items-center justify-between mb-4 pb-2 border-b border-surface-variant">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-primary flex items-center justify-center">
+<div class="w-full h-full rounded-full bg-primary animate-ping opacity-75"></div>
+</div>
+<h3 class="font-title-sm text-title-sm text-primary">执行中</h3>
+</div>
+<span class="font-label-sm text-label-sm text-primary bg-primary-fixed px-2 py-0.5 rounded-full">1</span>
+</div>
+<div class="flex-1 overflow-y-auto kanban-col space-y-4 pr-2">
+<!-- Task Card (Active) -->
+<div class="bg-surface rounded-lg border border-primary-fixed p-4 hover:shadow-[0px_4px_12px_rgba(0,0,0,0.05)] transition-all cursor-pointer relative overflow-hidden">
+<!-- Subtle animated background for active state -->
+<div class="absolute inset-0 bg-gradient-to-r from-transparent via-primary-fixed/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></div>
+<div class="flex justify-between items-start mb-3 relative z-10">
+<span class="font-label-sm text-label-sm text-primary bg-primary-fixed px-2 py-1 rounded-md">数据分析</span>
+<span class="material-symbols-outlined text-outline-variant hover:text-primary transition-colors text-[20px]" data-icon="more_horiz">more_horiz</span>
+</div>
+<h4 class="font-title-sm text-title-sm text-on-surface mb-2 relative z-10">分析竞品数据</h4>
+<p class="font-body-md text-body-md text-on-surface-variant text-[13px] line-clamp-2 mb-4 relative z-10">抓取Q3财报数据并生成可视化对比图表。</p>
+<!-- Progress Bar -->
+<div class="mb-4 relative z-10">
+<div class="flex justify-between items-center mb-1">
+<span class="font-label-sm text-label-sm text-on-surface-variant">处理进度</span>
+<span class="font-label-sm text-label-sm text-primary">65%</span>
+</div>
+<div class="w-full bg-surface-container-high rounded-full h-1.5">
+<div class="bg-primary h-1.5 rounded-full" style="width: 65%"></div>
+</div>
+</div>
+<div class="flex items-center justify-between mt-auto pt-3 border-t border-surface-variant relative z-10">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 rounded-full bg-primary flex items-center justify-center text-on-primary">
+<span class="material-symbols-outlined text-[14px] animate-spin" data-icon="sync">sync</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant">AI 正在分析...</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Column 3: 已完成 (Completed) -->
+<div class="flex-1 flex flex-col bg-surface-container-lowest rounded-xl border border-surface-variant p-4 opacity-70">
+<div class="flex items-center justify-between mb-4 pb-2 border-b border-surface-variant">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-outline-variant"></div>
+<h3 class="font-title-sm text-title-sm text-on-surface-variant">已完成</h3>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant bg-surface-container px-2 py-0.5 rounded-full">2</span>
+</div>
+<div class="flex-1 overflow-y-auto kanban-col space-y-4 pr-2">
+<!-- Task Card (Completed) -->
+<div class="bg-surface rounded-lg border border-surface-variant p-4">
+<div class="flex justify-between items-start mb-3">
+<span class="font-label-sm text-label-sm text-on-surface-variant bg-surface-container px-2 py-1 rounded-md">邮件</span>
+<span class="material-symbols-outlined text-outline-variant text-[20px]" data-icon="check_circle" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+<h4 class="font-title-sm text-title-sm text-on-surface-variant mb-2 line-through">回复客户咨询邮件</h4>
+<p class="font-body-md text-body-md text-outline text-[13px] line-clamp-1 mb-4">已发送标准报价单及合作协议。</p>
+</div>
+<!-- Task Card (Completed) -->
+<div class="bg-surface rounded-lg border border-surface-variant p-4">
+<div class="flex justify-between items-start mb-3">
+<span class="font-label-sm text-label-sm text-on-surface-variant bg-surface-container px-2 py-1 rounded-md">系统</span>
+<span class="material-symbols-outlined text-outline-variant text-[20px]" data-icon="check_circle" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+</div>
+<h4 class="font-title-sm text-title-sm text-on-surface-variant mb-2 line-through">清理本地缓存文件</h4>
+<p class="font-body-md text-body-md text-outline text-[13px] line-clamp-1 mb-4">释放 2.4GB 空间。</p>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer -->
+<footer class="fixed bottom-0 w-full md:w-[calc(100%-256px)] right-0 flex justify-between items-center px-container-padding py-unit z-50 bg-surface border-t border-outline-variant">
+<div class="flex items-center gap-2 font-label-sm text-label-sm text-primary">
+<div class="w-2 h-2 rounded-full bg-primary"></div>
+                Agent 就绪 | AI 正在倾听...
+            </div>
+<div class="flex gap-4">
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors" href="#">隐私政策</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors" href="#">服务条款</a>
+</div>
+</footer>
+</div>
+<style>
+        @keyframes shimmer {
+            100% {
+                transform: translateX(100%);
+            }
+        }
+    </style>
+
+
+</body></html>
