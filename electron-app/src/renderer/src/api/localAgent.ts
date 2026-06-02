@@ -24,6 +24,30 @@ export interface ModelStatusResponse {
   local_only: boolean
 }
 
+export interface AppSettingsResponse {
+  llm_provider: string
+  llm_base_url: string
+  llm_model: string
+  allow_remote_llm: boolean
+  enable_thinking: boolean
+  default_max_tokens: number
+  data_dir: string
+}
+
+export interface AppSettingsUpdate {
+  llm_base_url?: string
+  llm_model?: string
+  enable_thinking?: boolean
+  default_max_tokens?: number
+}
+
+export interface VoiceTranscriptionResponse {
+  status: 'ok' | 'not_configured' | 'error'
+  transcript: string
+  message: string
+  audio_bytes: number
+}
+
 export interface ChatRequest {
   prompt?: string
   messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
@@ -39,16 +63,55 @@ export interface ChatResponse {
   model: string
   provider: string
   reply: string
+  tasks_created?: TaskItem[]
+  workflow_events?: AgentWorkflowEvent[]
+}
+
+export interface AgentWorkflowEvent {
+  step: string
+  status: 'running' | 'completed' | 'skipped' | 'error'
+  message: string
+}
+
+export interface TaskItem {
+  id: string
+  title: string
+  description: string
+  status: 'todo' | 'in_progress' | 'done'
+  priority: 'low' | 'medium' | 'high'
+  progress: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskCreate {
+  title: string
+  description?: string
+  status?: TaskItem['status']
+  priority?: TaskItem['priority']
+  progress?: number
+}
+
+export interface TaskUpdate {
+  title?: string
+  description?: string
+  status?: TaskItem['status']
+  priority?: TaskItem['priority']
+  progress?: number
 }
 
 export interface ChatStreamEvent {
-  type: 'start' | 'delta' | 'done' | 'error'
+  type: 'start' | 'delta' | 'done' | 'error' | 'tasks' | 'workflow'
   request_id: string
   model?: string
   provider?: string
   delta?: string
   reply?: string
   error?: string
+  tasks_created?: TaskItem[]
+  workflow_step?: string
+  workflow_status?: AgentWorkflowEvent['status']
+  message?: string
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -85,11 +148,47 @@ export const getHealth = (): Promise<HealthResponse> => request<HealthResponse>(
 export const getModelsStatus = (): Promise<ModelStatusResponse> =>
   request<ModelStatusResponse>('/models/status')
 
+export const getAppSettings = (): Promise<AppSettingsResponse> =>
+  request<AppSettingsResponse>('/settings')
+
+export const updateAppSettings = (
+  payload: AppSettingsUpdate
+): Promise<AppSettingsResponse> =>
+  request<AppSettingsResponse>('/settings', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  })
+
 export const sendChat = (payload: ChatRequest): Promise<ChatResponse> =>
   request<ChatResponse>('/chat', {
     method: 'POST',
     body: JSON.stringify(payload)
   })
+
+export const getTasks = (): Promise<TaskItem[]> => request<TaskItem[]>('/tasks')
+
+export const createTask = (payload: TaskCreate): Promise<TaskItem> =>
+  request<TaskItem>('/tasks', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+
+export const updateTask = (taskId: string, payload: TaskUpdate): Promise<TaskItem> =>
+  request<TaskItem>(`/tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })
+
+export const transcribeVoice = async (audio: Blob): Promise<VoiceTranscriptionResponse> => {
+  const response = await fetch(`${agentBaseUrl}/voice/transcribe`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': audio.type || 'application/octet-stream'
+    },
+    body: audio
+  })
+  return parseResponse<VoiceTranscriptionResponse>(response)
+}
 
 export const sendChatStream = async (
   payload: ChatRequest,

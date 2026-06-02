@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-from app.config import get_settings
+from app.runtime_settings import get_runtime_settings
 
 
 router = APIRouter(tags=["health"])
@@ -10,7 +10,7 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 async def health() -> dict:
-    settings = get_settings()
+    settings = get_runtime_settings()
 
     return {
         "status": "ok",

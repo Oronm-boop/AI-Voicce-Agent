@@ -29,6 +29,7 @@ try {
     --onedir `
     --name local-agent-runtime `
     --collect-submodules uvicorn `
+    --collect-all sherpa_onnx `
     --hidden-import uvicorn.logging `
     runtime_entry.py
 

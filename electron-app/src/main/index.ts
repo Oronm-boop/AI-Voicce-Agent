@@ -35,6 +35,9 @@ const isAutoStartEnabled = (): boolean => {
   return value === undefined || value.toLowerCase() !== 'false'
 }
 
+const resolveAgentDataDir = (): string =>
+  process.env.LOCAL_AGENT_DATA_DIR || join(app.getPath('userData'), 'local-agent')
+
 const checkAgentHealth = (timeoutMs = 1500): Promise<boolean> =>
   new Promise((resolve) => {
     const req = httpRequest(
@@ -195,6 +198,7 @@ const ensureLocalAgentStarted = async (): Promise<void> => {
   }
 
   const executablePath = resolveLocalAgentExecutable()
+  const agentDataDir = resolveAgentDataDir()
   if (executablePath) {
     const executableCwd = join(executablePath, '..')
     const args = ['--host', agentHost, '--port', String(agentPort)]
@@ -203,7 +207,8 @@ const ensureLocalAgentStarted = async (): Promise<void> => {
       cwd: executableCwd,
       windowsHide: true,
       env: {
-        ...process.env
+        ...process.env,
+        DATA_DIR: agentDataDir
       }
     })
     attachLocalAgentProcessListeners(child)
@@ -224,7 +229,8 @@ const ensureLocalAgentStarted = async (): Promise<void> => {
       windowsHide: true,
       env: {
         ...process.env,
-        PYTHONIOENCODING: 'utf-8'
+        PYTHONIOENCODING: 'utf-8',
+        DATA_DIR: agentDataDir
       }
     })
     attachLocalAgentProcessListeners(child)
