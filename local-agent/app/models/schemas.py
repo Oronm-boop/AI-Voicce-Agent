@@ -22,6 +22,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="Enable or disable Ollama thinking output for thinking models.",
     )
+    stream: bool = Field(
+        default=False,
+        description="Return server-sent events for incremental generation output.",
+    )
     request_id: str = Field(default_factory=lambda: str(uuid4()))
 
     @model_validator(mode="after")
@@ -42,3 +46,16 @@ class ChatResponse(BaseModel):
     model: str
     provider: str
     reply: str
+
+
+ChatStreamEventType = Literal["start", "delta", "done", "error"]
+
+
+class ChatStreamEvent(BaseModel):
+    type: ChatStreamEventType
+    request_id: str
+    model: str | None = None
+    provider: str | None = None
+    delta: str | None = None
+    reply: str | None = None
+    error: str | None = None

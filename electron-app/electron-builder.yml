@@ -11,6 +11,11 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+extraResources:
+  - from: ../local-agent/dist/local-agent-runtime
+    to: local-agent
+    filter:
+      - '**/*'
 win:
   executableName: electron-app
 nsis:

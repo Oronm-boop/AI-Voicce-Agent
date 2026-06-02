@@ -63,3 +63,37 @@ Body:
 ```
 
 `qwen2.5:0.5b` 体积小、响应快，适合 MVP 首轮接口联调。后续可以在 `.env` 中把 `LLM_MODEL` 切换为更强的本地模型。
+
+## 流式返回（SSE）
+
+`POST http://127.0.0.1:8765/chat`
+
+Body 示例：
+
+```json
+{
+  "prompt": "你好，用一句话介绍你自己",
+  "stream": true,
+  "max_tokens": 128
+}
+```
+
+返回 `Content-Type: text/event-stream`，事件类型包括：
+
+- `start`：开始生成
+- `delta`：增量文本
+- `done`：结束并包含完整 `reply`
+- `error`：错误信息
+
+## Windows 打包（Python 后端 EXE）
+
+```powershell
+cd local-agent
+.\build_windows.ps1 -Clean
+```
+
+产物路径：
+
+```text
+local-agent\dist\local-agent-runtime\local-agent-runtime.exe
+```

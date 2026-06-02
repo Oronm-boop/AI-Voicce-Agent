@@ -63,6 +63,12 @@ $ npm run build:mac
 $ npm run build:linux
 ```
 
+### Windows Packaging Notes (Electron + Local Python Backend)
+
+- `npm run build:win` 会先执行 `build:agent:win`，自动把 `local-agent` 打成 `local-agent-runtime.exe`。
+- 打包时通过 `extraResources` 将后端 EXE 一并放入安装包资源目录。
+- 应用启动时主进程优先拉起打包后的 `local-agent-runtime.exe`，找不到时回退到开发态 Python 启动方式。
+
 ## Examples
 
 - [electron-vite-bytecode-example](https://github.com/alex8088/electron-vite-bytecode-example), source code protection

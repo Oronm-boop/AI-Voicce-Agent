@@ -3,7 +3,6 @@
     <div ref="messageListRef" class="flex-1 overflow-y-auto flex flex-col items-center pb-20">
       <div class="w-full max-w-3xl px-6 py-8 flex flex-col gap-6 mt-8">
         <template v-for="msg in messages" :key="msg.id">
-          <!-- AI 消息 -->
           <div v-if="msg.role === 'ai'" class="flex items-start gap-4">
             <div
               class="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center flex-shrink-0 border border-outline-variant"
@@ -19,7 +18,6 @@
             </div>
           </div>
 
-          <!-- 用户消息 -->
           <div v-else class="flex items-start gap-4 flex-row-reverse">
             <div
               class="w-10 h-10 rounded-full bg-primary flex items-center justify-center flex-shrink-0 text-on-primary"
@@ -36,7 +34,6 @@
       </div>
     </div>
 
-    <!-- 输入交互区 -->
     <div class="w-full border-t border-outline-variant bg-surface-container-lowest/70">
       <div class="mx-auto max-w-3xl px-6 py-6 flex flex-col gap-4">
         <VoiceWave class="mb-1" :active="listening" />
@@ -98,7 +95,12 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import MaterialIcon from '@components/MaterialIcon.vue'
 import VoiceWave from '@components/VoiceWave.vue'
-import { getModelsStatus, sendChat, type ModelStatusResponse } from '@api/localAgent'
+import {
+  getModelsStatus,
+  sendChatStream,
+  type ChatStreamEvent,
+  type ModelStatusResponse
+} from '@api/localAgent'
 
 interface Message {
   id: string
@@ -151,6 +153,15 @@ const appendMessage = async (role: Message['role'], text: string): Promise<void>
   await scrollToBottom()
 }
 
+const updateMessageText = (id: string, text: string): void => {
+  const target = messages.value.find((message) => message.id === id)
+  if (!target) {
+    return
+  }
+  target.text = text
+  void scrollToBottom()
+}
+
 const checkModelStatus = async (): Promise<void> => {
   try {
     status.value = await getModelsStatus()
@@ -171,17 +182,41 @@ const handleSubmit = async (): Promise<void> => {
   sending.value = true
 
   await appendMessage('user', prompt)
+  const assistantMessageId = createMessageId()
+  messages.value.push({ id: assistantMessageId, role: 'ai', text: '正在生成...' })
+  await scrollToBottom()
+
+  let streamedReply = ''
 
   try {
-    const response = await sendChat({
-      prompt,
-      max_tokens: 256
-    })
-    await appendMessage('ai', response.reply)
+    const response = await sendChatStream(
+      {
+        prompt,
+        max_tokens: 256
+      },
+      (event: ChatStreamEvent) => {
+        if (event.type === 'delta' && event.delta) {
+          streamedReply += event.delta
+          updateMessageText(assistantMessageId, streamedReply)
+        }
+
+        if (event.type === 'done') {
+          streamedReply = event.reply ?? streamedReply
+          updateMessageText(assistantMessageId, streamedReply)
+        }
+      }
+    )
+
+    if (!streamedReply) {
+      streamedReply = response.reply
+      updateMessageText(assistantMessageId, streamedReply)
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     errorMessage.value = `请求失败：${message}`
-    await appendMessage('ai', `本地模型调用失败：${message}`)
+    if (!streamedReply) {
+      updateMessageText(assistantMessageId, `本地模型调用失败：${message}`)
+    }
   } finally {
     sending.value = false
   }

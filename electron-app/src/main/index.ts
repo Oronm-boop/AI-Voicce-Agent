@@ -9,6 +9,8 @@ import icon from '../../resources/icon.png?asset'
 const DEFAULT_AGENT_HOST = '127.0.0.1'
 const DEFAULT_AGENT_PORT = 8765
 const DEFAULT_AGENT_ENTRY = 'app.main:app'
+const DEFAULT_AGENT_EXECUTABLE_NAME =
+  process.platform === 'win32' ? 'local-agent-runtime.exe' : 'local-agent-runtime'
 const DEFAULT_AGENT_READY_TIMEOUT_MS = 15000
 
 let localAgentProcess: ChildProcess | null = null
@@ -76,6 +78,36 @@ const resolveLocalAgentDir = (): string | null => {
   return null
 }
 
+const resolveLocalAgentExecutable = (): string | null => {
+  const customExecutable = process.env.LOCAL_AGENT_EXECUTABLE?.trim()
+  const candidates = [
+    customExecutable,
+    join(
+      app.getAppPath(),
+      '..',
+      'local-agent',
+      'dist',
+      'local-agent-runtime',
+      DEFAULT_AGENT_EXECUTABLE_NAME
+    ),
+    join(process.resourcesPath, 'local-agent', DEFAULT_AGENT_EXECUTABLE_NAME),
+    join(
+      process.resourcesPath,
+      'app.asar.unpacked',
+      'local-agent',
+      DEFAULT_AGENT_EXECUTABLE_NAME
+    )
+  ].filter((value): value is string => Boolean(value))
+
+  for (const executablePath of candidates) {
+    if (existsSync(executablePath)) {
+      return executablePath
+    }
+  }
+
+  return null
+}
+
 const resolvePythonExecutable = (agentDir: string): string => {
   const customPython = process.env.LOCAL_AGENT_PYTHON?.trim()
   if (customPython) {
@@ -105,51 +137,7 @@ const stopLocalAgent = (): void => {
   localAgentOwnedByApp = false
 }
 
-const waitForAgentReady = async (timeoutMs: number): Promise<boolean> => {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (await checkAgentHealth()) {
-      return true
-    }
-
-    if (localAgentProcess?.exitCode !== null || localAgentProcess?.killed) {
-      return false
-    }
-    await delay(300)
-  }
-  return false
-}
-
-const ensureLocalAgentStarted = async (): Promise<void> => {
-  if (!isAutoStartEnabled()) {
-    console.log('[local-agent] Auto-start disabled by LOCAL_AGENT_AUTOSTART=false')
-    return
-  }
-
-  if (await checkAgentHealth()) {
-    console.log('[local-agent] Reusing existing backend process')
-    return
-  }
-
-  const agentDir = resolveLocalAgentDir()
-  if (!agentDir) {
-    console.error('[local-agent] Not found. Set LOCAL_AGENT_DIR to local-agent path.')
-    return
-  }
-
-  const pythonExecutable = resolvePythonExecutable(agentDir)
-  const args = ['-m', 'uvicorn', agentEntry, '--host', agentHost, '--port', String(agentPort)]
-
-  console.log(`[local-agent] Starting backend: ${pythonExecutable} ${args.join(' ')}`)
-  const child = spawn(pythonExecutable, args, {
-    cwd: agentDir,
-    windowsHide: true,
-    env: {
-      ...process.env,
-      PYTHONIOENCODING: 'utf-8'
-    }
-  })
-
+const attachLocalAgentProcessListeners = (child: ChildProcess): void => {
   localAgentProcess = child
   localAgentOwnedByApp = true
 
@@ -178,6 +166,69 @@ const ensureLocalAgentStarted = async (): Promise<void> => {
       localAgentOwnedByApp = false
     }
   })
+}
+
+const waitForAgentReady = async (timeoutMs: number): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await checkAgentHealth()) {
+      return true
+    }
+
+    if (localAgentProcess?.exitCode !== null || localAgentProcess?.killed) {
+      return false
+    }
+    await delay(300)
+  }
+  return false
+}
+
+const ensureLocalAgentStarted = async (): Promise<void> => {
+  if (!isAutoStartEnabled()) {
+    console.log('[local-agent] Auto-start disabled by LOCAL_AGENT_AUTOSTART=false')
+    return
+  }
+
+  if (await checkAgentHealth()) {
+    console.log('[local-agent] Reusing existing backend process')
+    return
+  }
+
+  const executablePath = resolveLocalAgentExecutable()
+  if (executablePath) {
+    const executableCwd = join(executablePath, '..')
+    const args = ['--host', agentHost, '--port', String(agentPort)]
+    console.log(`[local-agent] Starting packaged backend: ${executablePath} ${args.join(' ')}`)
+    const child = spawn(executablePath, args, {
+      cwd: executableCwd,
+      windowsHide: true,
+      env: {
+        ...process.env
+      }
+    })
+    attachLocalAgentProcessListeners(child)
+  } else {
+    const agentDir = resolveLocalAgentDir()
+    if (!agentDir) {
+      console.error(
+        '[local-agent] Not found. Set LOCAL_AGENT_DIR or LOCAL_AGENT_EXECUTABLE.'
+      )
+      return
+    }
+
+    const pythonExecutable = resolvePythonExecutable(agentDir)
+    const args = ['-m', 'uvicorn', agentEntry, '--host', agentHost, '--port', String(agentPort)]
+    console.log(`[local-agent] Starting Python backend: ${pythonExecutable} ${args.join(' ')}`)
+    const child = spawn(pythonExecutable, args, {
+      cwd: agentDir,
+      windowsHide: true,
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: 'utf-8'
+      }
+    })
+    attachLocalAgentProcessListeners(child)
+  }
 
   const ready = await waitForAgentReady(DEFAULT_AGENT_READY_TIMEOUT_MS)
   if (ready) {
