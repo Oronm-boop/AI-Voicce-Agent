@@ -57,7 +57,15 @@ class TaskPlanError(RuntimeError):
 
 
 def should_create_task_plan(request: ChatRequest) -> bool:
-    content = "\n".join(message.content for message in request.to_messages()).lower()
+    latest_user_message = next(
+        (
+            message.content
+            for message in reversed(request.to_messages())
+            if message.role == "user"
+        ),
+        "",
+    )
+    content = latest_user_message.lower()
     return any(keyword.lower() in content for keyword in TASK_INTENT_KEYWORDS)
 
 

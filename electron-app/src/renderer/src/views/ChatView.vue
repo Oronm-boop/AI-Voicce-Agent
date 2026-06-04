@@ -76,10 +76,11 @@
             type="button"
             class="w-12 h-12 rounded-full bg-surface-container-lowest border border-outline-variant flex items-center justify-center shadow-sm hover:bg-surface-container-low transition-colors group flex-shrink-0"
             :class="{ '!bg-primary !border-primary': listening }"
+            :title="voiceButtonTitle"
             @click="toggleListening"
           >
             <MaterialIcon
-              :name="transcribing ? 'hourglass_top' : listening ? 'mic' : 'mic_none'"
+              :name="voiceButtonIcon"
               :fill="listening ? 1 : 0"
               :size="24"
               class="group-hover:scale-110 transition-transform"
@@ -92,7 +93,7 @@
             class="flex-1 rounded-lg border border-outline-variant bg-surface-container-highest px-4 py-3 text-body-md text-on-surface resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
             rows="2"
             placeholder="输入你的问题，按 Enter 发送，Shift+Enter 换行"
-            :disabled="sending || transcribing"
+            :disabled="sending"
             @keydown="handleKeydown"
           ></textarea>
 
@@ -112,27 +113,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import MaterialIcon from '@components/MaterialIcon.vue'
 import VoiceWave from '@components/VoiceWave.vue'
+import { useConversationStore, type ChatMessage } from '@store/useConversationStore'
 import {
   getModelsStatus,
   sendChatStream,
   transcribeVoice,
+  type ChatRequest,
   type ChatStreamEvent,
   type ModelStatusResponse
 } from '@api/localAgent'
 
-interface Message {
-  id: string
-  role: 'ai' | 'user'
-  text: string
-}
-
-const messages = ref<Message[]>([
-  { id: 'msg-1', role: 'ai', text: '您好。我已准备就绪，可以协助您处理今天的任务。请随时开始对话。' }
-])
-
+const route = useRoute()
+const router = useRouter()
+const conversationStore = useConversationStore()
+const messages = computed(() => conversationStore.activeMessages)
 const listening = ref(false)
 const transcribing = ref(false)
 const inputText = ref('')
@@ -142,24 +140,34 @@ const speaking = ref(false)
 const errorMessage = ref('')
 const messageListRef = ref<HTMLElement | null>(null)
 const status = ref<ModelStatusResponse | null>(null)
+const hearingSpeech = ref(false)
+const queuedVoicePromptCount = ref(0)
 
-let seed = 2
 let activeMicStream: MediaStream | null = null
 let audioContext: AudioContext | null = null
 let sourceNode: MediaStreamAudioSourceNode | null = null
 let processorNode: ScriptProcessorNode | null = null
-let recordedSamples: Float32Array[] = []
-let recordedSampleCount = 0
 let recordingSampleRate = 16000
 let activeUtterance: SpeechSynthesisUtterance | null = null
+let speechSegmentActive = false
+let speechSegmentSamples: Float32Array[] = []
+let speechSegmentSampleCount = 0
+let speechSegmentMs = 0
+let speechSegmentSpeechMs = 0
+let speechSegmentSilenceMs = 0
+let preSpeechSamples: Float32Array[] = []
+let preSpeechSampleCount = 0
+let activeTranscriptionCount = 0
+let transcriptionChain: Promise<void> = Promise.resolve()
+let voicePromptQueue: string[] = []
+let drainingVoicePromptQueue = false
 
 const targetRecordingSampleRate = 16000
-
-const createMessageId = (): string => {
-  const id = `msg-${seed}`
-  seed += 1
-  return id
-}
+const voiceActivityThreshold = 0.018
+const silenceToSubmitMs = 900
+const minSpeechMs = 450
+const maxSpeechSegmentMs = 12000
+const preSpeechMs = 250
 
 const canSend = computed(() => inputText.value.trim().length > 0)
 
@@ -177,14 +185,37 @@ const modelStatusText = computed(() => {
 })
 
 const inputStatusText = computed(() => {
+  if (hearingSpeech.value) {
+    return '听到语音，停顿后自动执行'
+  }
   if (transcribing.value) {
-    return '正在识别...'
+    return '正在识别语音片段...'
+  }
+  if (listening.value && sending.value) {
+    return '正在执行语音命令...'
+  }
+  if (queuedVoicePromptCount.value > 0) {
+    return `还有 ${queuedVoicePromptCount.value} 条语音命令排队`
   }
   if (listening.value) {
-    return '正在倾听...'
+    return '实时语音已开启，直接说话即可'
   }
   return '点击麦克风开始对话'
 })
+
+const voiceButtonIcon = computed(() => {
+  if (transcribing.value && !listening.value) {
+    return 'hourglass_top'
+  }
+  if (hearingSpeech.value) {
+    return 'graphic_eq'
+  }
+  return listening.value ? 'mic' : 'mic_none'
+})
+
+const voiceButtonTitle = computed(() =>
+  listening.value ? '停止实时语音' : '开启实时语音'
+)
 
 const scrollToBottom = async (): Promise<void> => {
   await nextTick()
@@ -193,18 +224,51 @@ const scrollToBottom = async (): Promise<void> => {
   }
 }
 
-const appendMessage = async (role: Message['role'], text: string): Promise<void> => {
-  messages.value.push({ id: createMessageId(), role, text })
+const appendMessage = async (
+  role: ChatMessage['role'],
+  text: string
+): Promise<ChatMessage> => {
+  const message = conversationStore.appendMessage(role, text)
   await scrollToBottom()
+  return message
 }
 
-const updateMessageText = (id: string, text: string): void => {
-  const target = messages.value.find((message) => message.id === id)
-  if (!target) {
+const updateMessageText = (id: string, text: string, conversationId?: string): void => {
+  conversationStore.updateMessageText(id, text, conversationId)
+  void scrollToBottom()
+}
+
+const buildChatRequestMessages = (): ChatRequest['messages'] =>
+  messages.value
+    .filter((message, index) => {
+      if (index === 0 && message.role === 'ai') {
+        return false
+      }
+
+      return Boolean(message.text.trim()) && message.text !== '正在生成...'
+    })
+    .map((message) => ({
+      role: message.role === 'ai' ? 'assistant' : 'user',
+      content: message.text
+    }))
+
+const syncConversationFromRoute = async (): Promise<void> => {
+  const routeConversationId = route.query.conversationId
+  if (
+    typeof routeConversationId === 'string' &&
+    conversationStore.selectConversation(routeConversationId)
+  ) {
+    await scrollToBottom()
     return
   }
-  target.text = text
-  void scrollToBottom()
+
+  const conversationId = conversationStore.ensureConversation()
+  if (route.name === 'Chat' && routeConversationId !== conversationId) {
+    await router.replace({ name: 'Chat', query: { conversationId } })
+    return
+  }
+
+  await scrollToBottom()
 }
 
 const checkModelStatus = async (): Promise<void> => {
@@ -260,6 +324,87 @@ const toggleTts = (): void => {
   }
 }
 
+const submitPrompt = async (prompt: string): Promise<void> => {
+  const normalizedPrompt = prompt.trim()
+  if (sending.value || !normalizedPrompt) {
+    return
+  }
+
+  errorMessage.value = ''
+  sending.value = true
+  stopSpeaking()
+
+  await appendMessage('user', normalizedPrompt)
+  const conversationId = conversationStore.activeConversationId
+  const requestMessages = buildChatRequestMessages()
+  const assistantMessage = await appendMessage('ai', '正在生成...')
+  const assistantMessageId = assistantMessage.id
+
+  let streamedReply = ''
+
+  try {
+    const response = await sendChatStream(
+      {
+        messages: requestMessages
+      },
+      (event: ChatStreamEvent) => {
+        if (event.type === 'workflow' && event.message && !streamedReply) {
+          updateMessageText(assistantMessageId, event.message, conversationId)
+        }
+
+        if (event.type === 'delta' && event.delta) {
+          streamedReply += event.delta
+          updateMessageText(assistantMessageId, streamedReply, conversationId)
+        }
+
+        if (event.type === 'done') {
+          streamedReply = event.reply ?? streamedReply
+          updateMessageText(assistantMessageId, streamedReply, conversationId)
+          speakText(streamedReply)
+        }
+
+        if (event.type === 'computer_actions') {
+          const actionText =
+            event.message ||
+            event.computer_actions?.map((action) => action.message).join('\n') ||
+            ''
+          if (actionText && !streamedReply) {
+            updateMessageText(assistantMessageId, actionText, conversationId)
+          }
+        }
+
+        if (event.type === 'file_actions') {
+          const actionText =
+            event.message ||
+            event.file_actions?.map((action) => action.message).join('\n') ||
+            ''
+          if (actionText && !streamedReply) {
+            updateMessageText(assistantMessageId, actionText, conversationId)
+          }
+        }
+
+        if (event.type === 'tasks' && event.tasks_created?.length) {
+          const suffix = `\n\n已创建 ${event.tasks_created.length} 个任务，可在任务看板查看。`
+          updateMessageText(assistantMessageId, `${streamedReply}${suffix}`, conversationId)
+        }
+      }
+    )
+
+    if (!streamedReply) {
+      streamedReply = response.reply
+      updateMessageText(assistantMessageId, streamedReply, conversationId)
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    errorMessage.value = `请求失败：${message}`
+    if (!streamedReply) {
+      updateMessageText(assistantMessageId, `本地模型调用失败：${message}`, conversationId)
+    }
+  } finally {
+    sending.value = false
+  }
+}
+
 const handleSubmit = async (): Promise<void> => {
   if (sending.value || !canSend.value) {
     return
@@ -267,58 +412,7 @@ const handleSubmit = async (): Promise<void> => {
 
   const prompt = inputText.value.trim()
   inputText.value = ''
-  errorMessage.value = ''
-  sending.value = true
-  stopSpeaking()
-
-  await appendMessage('user', prompt)
-  const assistantMessageId = createMessageId()
-  messages.value.push({ id: assistantMessageId, role: 'ai', text: '正在生成...' })
-  await scrollToBottom()
-
-  let streamedReply = ''
-
-  try {
-    const response = await sendChatStream(
-      {
-        prompt
-      },
-      (event: ChatStreamEvent) => {
-        if (event.type === 'workflow' && event.message && !streamedReply) {
-          updateMessageText(assistantMessageId, event.message)
-        }
-
-        if (event.type === 'delta' && event.delta) {
-          streamedReply += event.delta
-          updateMessageText(assistantMessageId, streamedReply)
-        }
-
-        if (event.type === 'done') {
-          streamedReply = event.reply ?? streamedReply
-          updateMessageText(assistantMessageId, streamedReply)
-          speakText(streamedReply)
-        }
-
-        if (event.type === 'tasks' && event.tasks_created?.length) {
-          const suffix = `\n\n已创建 ${event.tasks_created.length} 个任务，可在任务看板查看。`
-          updateMessageText(assistantMessageId, `${streamedReply}${suffix}`)
-        }
-      }
-    )
-
-    if (!streamedReply) {
-      streamedReply = response.reply
-      updateMessageText(assistantMessageId, streamedReply)
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    errorMessage.value = `请求失败：${message}`
-    if (!streamedReply) {
-      updateMessageText(assistantMessageId, `本地模型调用失败：${message}`)
-    }
-  } finally {
-    sending.value = false
-  }
+  await submitPrompt(prompt)
 }
 
 const handleKeydown = async (event: KeyboardEvent): Promise<void> => {
@@ -344,19 +438,34 @@ const stopAudioGraph = (): void => {
   audioContext = null
 }
 
-const resetRecordingBuffers = (): void => {
-  recordedSamples = []
-  recordedSampleCount = 0
-}
-
-const mergeRecordingSamples = (): Float32Array => {
-  const merged = new Float32Array(recordedSampleCount)
+const mergeAudioSamples = (chunks: Float32Array[], sampleCount: number): Float32Array => {
+  const merged = new Float32Array(sampleCount)
   let offset = 0
-  for (const chunk of recordedSamples) {
+  for (const chunk of chunks) {
     merged.set(chunk, offset)
     offset += chunk.length
   }
   return merged
+}
+
+const resetPreSpeechBuffer = (): void => {
+  preSpeechSamples = []
+  preSpeechSampleCount = 0
+}
+
+const resetSpeechSegment = (): void => {
+  speechSegmentActive = false
+  speechSegmentSamples = []
+  speechSegmentSampleCount = 0
+  speechSegmentMs = 0
+  speechSegmentSpeechMs = 0
+  speechSegmentSilenceMs = 0
+  hearingSpeech.value = false
+}
+
+const resetSpeechBuffers = (): void => {
+  resetPreSpeechBuffer()
+  resetSpeechSegment()
 }
 
 const resampleAudio = (
@@ -421,26 +530,106 @@ const encodeWav = (samples: Float32Array, sampleRate: number): Blob => {
   return new Blob([view], { type: 'audio/wav' })
 }
 
-const handleRecordingComplete = async (): Promise<void> => {
-  const sourceSampleRate = recordingSampleRate
-  const samples = mergeRecordingSamples()
-  const wavSamples = resampleAudio(samples, sourceSampleRate, targetRecordingSampleRate)
-  const audio = encodeWav(wavSamples, targetRecordingSampleRate)
-  resetRecordingBuffers()
-  stopAudioGraph()
-  stopMicTracks()
+const setTranscribingCount = (delta: number): void => {
+  activeTranscriptionCount = Math.max(0, activeTranscriptionCount + delta)
+  transcribing.value = activeTranscriptionCount > 0
+}
 
-  if (!samples.length || !audio.size) {
-    errorMessage.value = '没有采集到有效音频。'
+const calculateRms = (samples: Float32Array): number => {
+  let sum = 0
+  for (const sample of samples) {
+    sum += sample * sample
+  }
+  return Math.sqrt(sum / Math.max(1, samples.length))
+}
+
+const pushPreSpeechChunk = (chunk: Float32Array): void => {
+  preSpeechSamples.push(chunk)
+  preSpeechSampleCount += chunk.length
+
+  const maxPreSpeechSamples = Math.round((recordingSampleRate * preSpeechMs) / 1000)
+  while (preSpeechSampleCount > maxPreSpeechSamples && preSpeechSamples.length > 0) {
+    const removed = preSpeechSamples.shift()
+    preSpeechSampleCount -= removed?.length || 0
+  }
+}
+
+const appendSpeechSegmentChunk = (
+  chunk: Float32Array,
+  speechDetected: boolean,
+  durationMs: number
+): void => {
+  speechSegmentSamples.push(chunk)
+  speechSegmentSampleCount += chunk.length
+  speechSegmentMs += durationMs
+
+  if (speechDetected) {
+    speechSegmentSpeechMs += durationMs
+    speechSegmentSilenceMs = 0
     return
   }
 
-  transcribing.value = true
+  speechSegmentSilenceMs += durationMs
+}
+
+const beginSpeechSegment = (
+  chunk: Float32Array,
+  durationMs: number,
+  speechDetected: boolean
+): void => {
+  if (speaking.value) {
+    stopSpeaking()
+  }
+
+  speechSegmentActive = true
+  speechSegmentSamples = [...preSpeechSamples]
+  speechSegmentSampleCount = preSpeechSampleCount
+  speechSegmentMs = (preSpeechSampleCount / recordingSampleRate) * 1000
+  speechSegmentSpeechMs = 0
+  speechSegmentSilenceMs = 0
+  resetPreSpeechBuffer()
+  hearingSpeech.value = true
+  appendSpeechSegmentChunk(chunk, speechDetected, durationMs)
+}
+
+const finishSpeechSegment = (force = false): void => {
+  if (!speechSegmentActive) {
+    return
+  }
+
+  const samples = mergeAudioSamples(speechSegmentSamples, speechSegmentSampleCount)
+  const sampleRate = recordingSampleRate
+  const speechMs = speechSegmentSpeechMs
+  const minimumSpeechMs = force ? Math.min(minSpeechMs, 180) : minSpeechMs
+  resetSpeechSegment()
+
+  if (!samples.length || speechMs < minimumSpeechMs) {
+    return
+  }
+
+  queueSpeechSegment(samples, sampleRate)
+}
+
+const processSpeechSegment = async (
+  samples: Float32Array,
+  sourceSampleRate: number
+): Promise<void> => {
+  const wavSamples = resampleAudio(samples, sourceSampleRate, targetRecordingSampleRate)
+  const audio = encodeWav(wavSamples, targetRecordingSampleRate)
+
+  if (!audio.size) {
+    return
+  }
+
+  setTranscribingCount(1)
   try {
     const result = await transcribeVoice(audio)
-    if (result.transcript) {
-      inputText.value = result.transcript
+    const transcript = result.transcript.trim()
+    if (transcript) {
+      enqueueVoicePrompt(transcript)
       errorMessage.value = ''
+    } else if (result.status === 'not_configured') {
+      errorMessage.value = result.message
     } else {
       errorMessage.value = result.message
     }
@@ -448,7 +637,83 @@ const handleRecordingComplete = async (): Promise<void> => {
     const message = error instanceof Error ? error.message : String(error)
     errorMessage.value = `语音识别失败：${message}`
   } finally {
-    transcribing.value = false
+    setTranscribingCount(-1)
+  }
+}
+
+const queueSpeechSegment = (samples: Float32Array, sampleRate: number): void => {
+  transcriptionChain = transcriptionChain
+    .catch(() => undefined)
+    .then(() => processSpeechSegment(samples, sampleRate))
+}
+
+const enqueueVoicePrompt = (prompt: string): void => {
+  const normalizedPrompt = prompt.trim()
+  if (!normalizedPrompt) {
+    return
+  }
+
+  voicePromptQueue.push(normalizedPrompt)
+  queuedVoicePromptCount.value = voicePromptQueue.length
+  void drainVoicePromptQueue()
+}
+
+const drainVoicePromptQueue = async (): Promise<void> => {
+  if (drainingVoicePromptQueue) {
+    return
+  }
+
+  drainingVoicePromptQueue = true
+  try {
+    while (voicePromptQueue.length > 0) {
+      if (sending.value) {
+        await new Promise((resolve) => window.setTimeout(resolve, 150))
+        continue
+      }
+
+      const prompt = voicePromptQueue.shift()
+      queuedVoicePromptCount.value = voicePromptQueue.length
+      if (prompt) {
+        await submitPrompt(prompt)
+      }
+    }
+  } finally {
+    drainingVoicePromptQueue = false
+    queuedVoicePromptCount.value = voicePromptQueue.length
+  }
+}
+
+const handleAudioProcess = (event: AudioProcessingEvent): void => {
+  const output = event.outputBuffer.getChannelData(0)
+  output.fill(0)
+
+  if (!listening.value) {
+    return
+  }
+
+  const input = event.inputBuffer.getChannelData(0)
+  const chunk = new Float32Array(input)
+  const durationMs = (chunk.length / recordingSampleRate) * 1000
+  const speechDetected = calculateRms(chunk) >= voiceActivityThreshold
+
+  if (!speechSegmentActive) {
+    if (speechDetected) {
+      beginSpeechSegment(chunk, durationMs, speechDetected)
+      return
+    }
+
+    pushPreSpeechChunk(chunk)
+    return
+  }
+
+  appendSpeechSegmentChunk(chunk, speechDetected, durationMs)
+  hearingSpeech.value = true
+
+  if (
+    speechSegmentSilenceMs >= silenceToSubmitMs ||
+    speechSegmentMs >= maxSpeechSegmentMs
+  ) {
+    finishSpeechSegment()
   }
 }
 
@@ -465,25 +730,20 @@ const startListening = async (): Promise<void> => {
   }
 
   try {
-    resetRecordingBuffers()
-    activeMicStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    resetSpeechBuffers()
+    activeMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1
+      }
+    })
     audioContext = new AudioContextCtor()
     recordingSampleRate = audioContext.sampleRate
     sourceNode = audioContext.createMediaStreamSource(activeMicStream)
     processorNode = audioContext.createScriptProcessor(4096, 1, 1)
-    processorNode.onaudioprocess = (event) => {
-      const output = event.outputBuffer.getChannelData(0)
-      output.fill(0)
-
-      if (!listening.value) {
-        return
-      }
-
-      const input = event.inputBuffer.getChannelData(0)
-      const chunk = new Float32Array(input)
-      recordedSamples.push(chunk)
-      recordedSampleCount += chunk.length
-    }
+    processorNode.onaudioprocess = handleAudioProcess
     sourceNode.connect(processorNode)
     processorNode.connect(audioContext.destination)
     await audioContext.resume()
@@ -492,33 +752,48 @@ const startListening = async (): Promise<void> => {
   } catch (error) {
     stopAudioGraph()
     stopMicTracks()
-    resetRecordingBuffers()
+    resetSpeechBuffers()
     const message = error instanceof Error ? error.message : String(error)
     errorMessage.value = `麦克风启动失败：${message}`
   }
 }
 
-const toggleListening = async (): Promise<void> => {
-  if (transcribing.value) {
-    return
+const stopContinuousListening = (): void => {
+  const wasListening = listening.value
+  listening.value = false
+  if (wasListening) {
+    finishSpeechSegment(true)
   }
+  stopAudioGraph()
+  stopMicTracks()
+  resetPreSpeechBuffer()
+  hearingSpeech.value = false
+}
+
+const toggleListening = async (): Promise<void> => {
   if (listening.value) {
-    listening.value = false
-    await handleRecordingComplete()
+    stopContinuousListening()
     return
   }
   await startListening()
 }
 
+watch(
+  () => route.query.conversationId,
+  () => {
+    void syncConversationFromRoute()
+  }
+)
+
 onMounted(async () => {
+  await syncConversationFromRoute()
   await checkModelStatus()
   await scrollToBottom()
 })
 
 onBeforeUnmount(() => {
   stopSpeaking()
-  stopAudioGraph()
-  stopMicTracks()
-  resetRecordingBuffers()
+  stopContinuousListening()
+  resetSpeechBuffers()
 })
 </script>

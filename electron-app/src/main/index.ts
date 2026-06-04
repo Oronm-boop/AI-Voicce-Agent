@@ -1,6 +1,6 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, statSync } from 'fs'
 import { request as httpRequest } from 'http'
 import { spawn, type ChildProcess } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -15,6 +15,45 @@ const DEFAULT_AGENT_READY_TIMEOUT_MS = 15000
 
 let localAgentProcess: ChildProcess | null = null
 let localAgentOwnedByApp = false
+
+const registerWorkspaceIpc = (): void => {
+  ipcMain.handle('workspace:select', async (event): Promise<string | null> => {
+    const options: OpenDialogOptions = {
+      title: '选择工作空间',
+      buttonLabel: '选择此文件夹',
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender)
+    const result = ownerWindow
+      ? await dialog.showOpenDialog(ownerWindow, options)
+      : await dialog.showOpenDialog(options)
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('workspace:open', async (_event, workspacePath: unknown): Promise<void> => {
+    if (typeof workspacePath !== 'string' || !workspacePath.trim()) {
+      throw new Error('请先选择工作空间。')
+    }
+
+    const normalizedPath = workspacePath.trim()
+    if (!existsSync(normalizedPath)) {
+      throw new Error('工作空间不存在。')
+    }
+    if (!statSync(normalizedPath).isDirectory()) {
+      throw new Error('工作空间路径不是文件夹。')
+    }
+
+    const error = await shell.openPath(normalizedPath)
+    if (error) {
+      throw new Error(error)
+    }
+  })
+}
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -282,6 +321,7 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
+  registerWorkspaceIpc()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

@@ -1,6 +1,7 @@
 from app.config import Settings, get_settings
 from app.models.schemas import AppSettingsResponse, AppSettingsUpdate
 from app.security.local_only import ensure_allowed_model_url
+from app.security.workspace import normalize_workspace_path
 from app.storage.settings import load_setting_overrides, save_setting_overrides
 
 
@@ -19,6 +20,7 @@ def get_app_settings_response() -> AppSettingsResponse:
         allow_remote_llm=settings.allow_remote_llm,
         enable_thinking=settings.enable_thinking,
         default_max_tokens=settings.default_max_tokens,
+        workspace_path=settings.workspace_path,
         data_dir=settings.data_dir,
     )
 
@@ -32,6 +34,9 @@ def update_app_settings(payload: AppSettingsUpdate) -> AppSettingsResponse:
             updates["llm_base_url"],
             allow_remote_llm=base_settings.allow_remote_llm,
         )
+
+    if "workspace_path" in updates:
+        updates["workspace_path"] = normalize_workspace_path(updates["workspace_path"])
 
     save_setting_overrides(base_settings, updates)
     return get_app_settings_response()

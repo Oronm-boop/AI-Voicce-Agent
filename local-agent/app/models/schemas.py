@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -86,16 +86,48 @@ class AgentWorkflowEvent(BaseModel):
     message: str
 
 
+ComputerActionStatus = Literal["success", "error", "skipped", "confirm_required"]
+
+
+class ComputerActionResult(BaseModel):
+    tool: str
+    status: ComputerActionStatus
+    message: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+FileActionStatus = Literal["success", "error", "skipped"]
+
+
+class FileActionResult(BaseModel):
+    action: str
+    status: FileActionStatus
+    message: str
+    path: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatResponse(BaseModel):
     request_id: str
     model: str
     provider: str
     reply: str
     tasks_created: list[TaskItem] = Field(default_factory=list)
+    computer_actions: list[ComputerActionResult] = Field(default_factory=list)
+    file_actions: list[FileActionResult] = Field(default_factory=list)
     workflow_events: list[AgentWorkflowEvent] = Field(default_factory=list)
 
 
-ChatStreamEventType = Literal["start", "delta", "done", "error", "tasks", "workflow"]
+ChatStreamEventType = Literal[
+    "start",
+    "delta",
+    "done",
+    "error",
+    "tasks",
+    "workflow",
+    "computer_actions",
+    "file_actions",
+]
 
 
 class ChatStreamEvent(BaseModel):
@@ -107,6 +139,8 @@ class ChatStreamEvent(BaseModel):
     reply: str | None = None
     error: str | None = None
     tasks_created: list[TaskItem] = Field(default_factory=list)
+    computer_actions: list[ComputerActionResult] = Field(default_factory=list)
+    file_actions: list[FileActionResult] = Field(default_factory=list)
     workflow_step: str | None = None
     workflow_status: WorkflowStatus | None = None
     message: str | None = None
@@ -125,6 +159,7 @@ class AppSettingsResponse(BaseModel):
     allow_remote_llm: bool
     enable_thinking: bool
     default_max_tokens: int
+    workspace_path: str
     data_dir: str
 
 
@@ -133,6 +168,7 @@ class AppSettingsUpdate(BaseModel):
     llm_model: str | None = Field(default=None, min_length=1, max_length=200)
     enable_thinking: bool | None = None
     default_max_tokens: int | None = Field(default=None, gt=0, le=8192)
+    workspace_path: str | None = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
     def require_at_least_one_field(self) -> "AppSettingsUpdate":

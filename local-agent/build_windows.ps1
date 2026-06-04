@@ -38,6 +38,16 @@ try {
     throw "Build failed: executable not found at $exePath"
   }
 
+  $runtimeDir = Split-Path -Parent $exePath
+  $modelsSource = Join-Path $projectRoot "models"
+  $modelsTarget = Join-Path $runtimeDir "models"
+  if (Test-Path $modelsSource) {
+    if (Test-Path $modelsTarget) {
+      Remove-Item -LiteralPath $modelsTarget -Recurse -Force
+    }
+    Copy-Item -LiteralPath $modelsSource -Destination $modelsTarget -Recurse
+  }
+
   Write-Output "Build success: $exePath"
 }
 finally {

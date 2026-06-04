@@ -11,6 +11,7 @@ ALLOWED_SETTING_KEYS = {
     "llm_model",
     "enable_thinking",
     "default_max_tokens",
+    "workspace_path",
 }
 
 

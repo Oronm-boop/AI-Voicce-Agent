@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=120.0, gt=0)
     default_max_tokens: int = Field(default=2048, gt=0)
     enable_thinking: bool = False
+    workspace_path: str = ""
     data_dir: str = "data"
     asr_provider: str = "sherpa-onnx"
     asr_model_type: str = "sense_voice"

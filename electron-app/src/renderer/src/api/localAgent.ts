@@ -31,6 +31,7 @@ export interface AppSettingsResponse {
   allow_remote_llm: boolean
   enable_thinking: boolean
   default_max_tokens: number
+  workspace_path: string
   data_dir: string
 }
 
@@ -39,6 +40,7 @@ export interface AppSettingsUpdate {
   llm_model?: string
   enable_thinking?: boolean
   default_max_tokens?: number
+  workspace_path?: string
 }
 
 export interface VoiceTranscriptionResponse {
@@ -64,6 +66,8 @@ export interface ChatResponse {
   provider: string
   reply: string
   tasks_created?: TaskItem[]
+  computer_actions?: ComputerActionResult[]
+  file_actions?: FileActionResult[]
   workflow_events?: AgentWorkflowEvent[]
 }
 
@@ -71,6 +75,21 @@ export interface AgentWorkflowEvent {
   step: string
   status: 'running' | 'completed' | 'skipped' | 'error'
   message: string
+}
+
+export interface ComputerActionResult {
+  tool: string
+  status: 'success' | 'error' | 'skipped' | 'confirm_required'
+  message: string
+  details: Record<string, unknown>
+}
+
+export interface FileActionResult {
+  action: string
+  status: 'success' | 'error' | 'skipped'
+  message: string
+  path: string
+  details: Record<string, unknown>
 }
 
 export interface TaskItem {
@@ -101,7 +120,15 @@ export interface TaskUpdate {
 }
 
 export interface ChatStreamEvent {
-  type: 'start' | 'delta' | 'done' | 'error' | 'tasks' | 'workflow'
+  type:
+    | 'start'
+    | 'delta'
+    | 'done'
+    | 'error'
+    | 'tasks'
+    | 'workflow'
+    | 'computer_actions'
+    | 'file_actions'
   request_id: string
   model?: string
   provider?: string
@@ -109,9 +136,40 @@ export interface ChatStreamEvent {
   reply?: string
   error?: string
   tasks_created?: TaskItem[]
+  computer_actions?: ComputerActionResult[]
+  file_actions?: FileActionResult[]
   workflow_step?: string
   workflow_status?: AgentWorkflowEvent['status']
   message?: string
+}
+
+function formatErrorDetail(detail: unknown): string {
+  if (!detail) {
+    return ''
+  }
+  if (typeof detail === 'string') {
+    return detail
+  }
+  if (Array.isArray(detail)) {
+    return detail.map(formatErrorDetail).filter(Boolean).join('；')
+  }
+  if (typeof detail === 'object') {
+    const payload = detail as Record<string, unknown>
+    const message = payload.msg || payload.message || payload.detail
+    if (message) {
+      const location = Array.isArray(payload.loc) ? payload.loc.join('.') : ''
+      const text = formatErrorDetail(message)
+      return location ? `${location}: ${text}` : text
+    }
+
+    try {
+      return JSON.stringify(payload)
+    } catch {
+      return String(payload)
+    }
+  }
+
+  return String(detail)
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -121,9 +179,9 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
   let detail = response.statusText
   try {
-    const errorData = (await response.json()) as { detail?: string }
+    const errorData = (await response.json()) as { detail?: unknown }
     if (errorData.detail) {
-      detail = errorData.detail
+      detail = formatErrorDetail(errorData.detail)
     }
   } catch {
     // Ignore parsing error and fallback to status text.
@@ -209,9 +267,9 @@ export const sendChatStream = async (
   if (!response.ok) {
     let detail = response.statusText
     try {
-      const errorData = (await response.json()) as { detail?: string }
+      const errorData = (await response.json()) as { detail?: unknown }
       if (errorData.detail) {
-        detail = errorData.detail
+        detail = formatErrorDetail(errorData.detail)
       }
     } catch {
       // Ignore parsing error and fallback to status text.

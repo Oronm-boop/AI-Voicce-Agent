@@ -3,6 +3,18 @@ from typing import AsyncIterator, Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from app.agent.computer_control import (
+    build_computer_control_reply,
+    execute_computer_control_plan,
+    plan_computer_control,
+    should_control_computer,
+)
+from app.agent.file_control import (
+    build_file_operation_reply,
+    execute_file_operation_plan,
+    plan_file_operations,
+    should_control_files,
+)
 from app.agent.task_planner import (
     TaskPlanError,
     build_task_plan_request,
@@ -16,6 +28,8 @@ from app.models.schemas import (
     ChatRequest,
     ChatResponse,
     ChatStreamEvent,
+    ComputerActionResult,
+    FileActionResult,
     TaskItem,
     TaskPlan,
     WorkflowStatus,
@@ -23,7 +37,7 @@ from app.models.schemas import (
 from app.storage.tasks import create_tasks
 
 
-AgentIntent = Literal["chat", "task_plan"]
+AgentIntent = Literal["chat", "task_plan", "computer_control", "file_control"]
 
 
 class AgentWorkflowState(TypedDict, total=False):
@@ -70,21 +84,54 @@ def _stream_event(
     )
 
 
+def _detect_intent(request: ChatRequest) -> AgentIntent:
+    if should_control_files(request):
+        return "file_control"
+    if should_control_computer(request):
+        return "computer_control"
+    return "task_plan" if should_create_task_plan(request) else "chat"
+
+
+def _intent_message(intent: AgentIntent) -> str:
+    if intent == "file_control":
+        return "已识别为工作空间文件操作请求。"
+    if intent == "computer_control":
+        return "已识别为本地电脑控制请求。"
+    if intent == "task_plan":
+        return "已识别为任务规划请求，准备拆解步骤。"
+    return "已识别为普通对话请求。"
+
+
+def _computer_control_status(
+    results: list[ComputerActionResult],
+) -> WorkflowStatus:
+    if any(result.status == "error" for result in results):
+        return "error"
+    if any(result.status == "confirm_required" for result in results):
+        return "skipped"
+    return "completed"
+
+
+def _file_operation_status(
+    results: list[FileActionResult],
+) -> WorkflowStatus:
+    if any(result.status == "error" for result in results):
+        return "error"
+    if any(result.status == "skipped" for result in results):
+        return "skipped"
+    return "completed"
+
+
 async def _understand_request(state: AgentWorkflowState) -> AgentWorkflowState:
     request = state["request"]
-    intent: AgentIntent = "task_plan" if should_create_task_plan(request) else "chat"
-    message = (
-        "已识别为任务规划请求，准备拆解步骤。"
-        if intent == "task_plan"
-        else "已识别为普通对话请求。"
-    )
+    intent = _detect_intent(request)
     return {
         "intent": intent,
         "workflow_events": _append_event(
             state,
             "understand_request",
             "completed",
-            message,
+            _intent_message(intent),
         ),
     }
 
@@ -173,6 +220,70 @@ async def run_agent_workflow(
     client: OllamaClient,
     request: ChatRequest,
 ) -> ChatResponse:
+    if _detect_intent(request) == "file_control":
+        workflow_events = [
+            _event(
+                "understand_request",
+                "completed",
+                _intent_message("file_control"),
+            ),
+            _event(
+                "file_control",
+                "running",
+                "正在规划并执行工作空间文件操作。",
+            ),
+        ]
+        plan = await plan_file_operations(settings, client, request)
+        results = execute_file_operation_plan(settings, plan)
+        reply = build_file_operation_reply(plan, results)
+        workflow_events.append(
+            _event(
+                "file_control",
+                _file_operation_status(results),
+                "工作空间文件操作处理完成。",
+            )
+        )
+        return ChatResponse(
+            request_id=request.request_id,
+            model=request.model or settings.llm_model,
+            provider=settings.llm_provider,
+            reply=reply,
+            file_actions=results,
+            workflow_events=workflow_events,
+        )
+
+    if _detect_intent(request) == "computer_control":
+        workflow_events = [
+            _event(
+                "understand_request",
+                "completed",
+                _intent_message("computer_control"),
+            ),
+            _event(
+                "computer_control",
+                "running",
+                "正在规划并执行本地电脑动作。",
+            ),
+        ]
+        plan = await plan_computer_control(client, request)
+        results = execute_computer_control_plan(plan)
+        reply = build_computer_control_reply(plan, results)
+        workflow_events.append(
+            _event(
+                "computer_control",
+                _computer_control_status(results),
+                "本地电脑动作处理完成。",
+            )
+        )
+        return ChatResponse(
+            request_id=request.request_id,
+            model=request.model or settings.llm_model,
+            provider=settings.llm_provider,
+            reply=reply,
+            computer_actions=results,
+            workflow_events=workflow_events,
+        )
+
     state = await get_agent_graph().ainvoke(
         {
             "request": request,
@@ -198,18 +309,84 @@ async def stream_agent_workflow(
     client: OllamaClient,
     request: ChatRequest,
 ) -> AsyncIterator[ChatStreamEvent]:
-    intent: AgentIntent = "task_plan" if should_create_task_plan(request) else "chat"
+    intent = _detect_intent(request)
     yield _stream_event(
         request,
         settings,
         "understand_request",
         "completed",
-        (
-            "已识别为任务规划请求，准备拆解步骤。"
-            if intent == "task_plan"
-            else "已识别为普通对话请求。"
-        ),
+        _intent_message(intent),
     )
+
+    if intent == "computer_control":
+        yield _stream_event(
+            request,
+            settings,
+            "computer_control",
+            "running",
+            "正在规划并执行本地电脑动作。",
+        )
+        plan = await plan_computer_control(client, request)
+        results = execute_computer_control_plan(plan)
+        reply = build_computer_control_reply(plan, results)
+        yield ChatStreamEvent(
+            type="computer_actions",
+            request_id=request.request_id,
+            model=request.model or settings.llm_model,
+            provider=settings.llm_provider,
+            computer_actions=results,
+            message=reply,
+        )
+        yield _stream_event(
+            request,
+            settings,
+            "computer_control",
+            _computer_control_status(results),
+            "本地电脑动作处理完成。",
+        )
+        yield ChatStreamEvent(
+            type="done",
+            request_id=request.request_id,
+            model=request.model or settings.llm_model,
+            provider=settings.llm_provider,
+            reply=reply,
+        )
+        return
+
+    if intent == "file_control":
+        yield _stream_event(
+            request,
+            settings,
+            "file_control",
+            "running",
+            "正在规划并执行工作空间文件操作。",
+        )
+        plan = await plan_file_operations(settings, client, request)
+        results = execute_file_operation_plan(settings, plan)
+        reply = build_file_operation_reply(plan, results)
+        yield ChatStreamEvent(
+            type="file_actions",
+            request_id=request.request_id,
+            model=request.model or settings.llm_model,
+            provider=settings.llm_provider,
+            file_actions=results,
+            message=reply,
+        )
+        yield _stream_event(
+            request,
+            settings,
+            "file_control",
+            _file_operation_status(results),
+            "工作空间文件操作处理完成。",
+        )
+        yield ChatStreamEvent(
+            type="done",
+            request_id=request.request_id,
+            model=request.model or settings.llm_model,
+            provider=settings.llm_provider,
+            reply=reply,
+        )
+        return
 
     yield _stream_event(
         request,
