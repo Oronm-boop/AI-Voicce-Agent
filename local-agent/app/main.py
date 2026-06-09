@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -6,9 +8,10 @@ from app.api.health import router as health_router
 from app.api.models import router as models_router
 from app.api.settings import router as settings_router
 from app.api.tasks import router as tasks_router
-from app.api.voice import router as voice_router
+from app.api.voice import get_asr_engine, router as voice_router
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -35,3 +38,13 @@ app.include_router(chat_router)
 app.include_router(tasks_router)
 app.include_router(settings_router)
 app.include_router(voice_router)
+
+
+@app.on_event("startup")
+async def _warm_up_asr() -> None:
+    """Preload ASR engine at startup so the first voice request avoids cold-start latency."""
+    try:
+        get_asr_engine()
+        logger.info("ASR engine warmed up successfully.")
+    except Exception:
+        logger.warning("ASR engine warm-up skipped (model not configured or missing).")

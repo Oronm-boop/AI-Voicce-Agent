@@ -166,10 +166,10 @@ let drainingVoicePromptQueue = false
 
 const targetRecordingSampleRate = 16000
 const voiceActivityThreshold = 0.018
-const silenceToSubmitMs = 900
-const minSpeechMs = 450
+const silenceToSubmitMs = 400
+const minSpeechMs = 300
 const maxSpeechSegmentMs = 12000
-const preSpeechMs = 250
+const preSpeechMs = 200
 const voiceExecutionKeyword = '执行'
 
 const canSend = computed(() => inputText.value.trim().length > 0)
@@ -813,7 +813,7 @@ const startListening = async (): Promise<void> => {
     audioContext = new AudioContextCtor()
     recordingSampleRate = audioContext.sampleRate
     sourceNode = audioContext.createMediaStreamSource(activeMicStream)
-    processorNode = audioContext.createScriptProcessor(4096, 1, 1)
+    processorNode = audioContext.createScriptProcessor(2048, 1, 1)
     processorNode.onaudioprocess = handleAudioProcess
     sourceNode.connect(processorNode)
     processorNode.connect(audioContext.destination)
