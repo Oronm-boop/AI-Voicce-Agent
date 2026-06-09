@@ -142,6 +142,7 @@ const messageListRef = ref<HTMLElement | null>(null)
 const status = ref<ModelStatusResponse | null>(null)
 const hearingSpeech = ref(false)
 const queuedVoicePromptCount = ref(0)
+const pendingVoicePromptText = ref('')
 
 let activeMicStream: MediaStream | null = null
 let audioContext: AudioContext | null = null
@@ -160,6 +161,7 @@ let preSpeechSampleCount = 0
 let activeTranscriptionCount = 0
 let transcriptionChain: Promise<void> = Promise.resolve()
 let voicePromptQueue: string[] = []
+let pendingVoicePromptParts: string[] = []
 let drainingVoicePromptQueue = false
 
 const targetRecordingSampleRate = 16000
@@ -168,6 +170,7 @@ const silenceToSubmitMs = 900
 const minSpeechMs = 450
 const maxSpeechSegmentMs = 12000
 const preSpeechMs = 250
+const voiceExecutionKeyword = '执行'
 
 const canSend = computed(() => inputText.value.trim().length > 0)
 
@@ -186,7 +189,7 @@ const modelStatusText = computed(() => {
 
 const inputStatusText = computed(() => {
   if (hearingSpeech.value) {
-    return '听到语音，停顿后自动执行'
+    return '听到语音，正在识别并暂存'
   }
   if (transcribing.value) {
     return '正在识别语音片段...'
@@ -197,8 +200,11 @@ const inputStatusText = computed(() => {
   if (queuedVoicePromptCount.value > 0) {
     return `还有 ${queuedVoicePromptCount.value} 条语音命令排队`
   }
+  if (pendingVoicePromptText.value) {
+    return '已暂存语音命令，说“执行”后开始执行'
+  }
   if (listening.value) {
-    return '实时语音已开启，直接说话即可'
+    return '实时语音已开启，说出命令后用“执行”确认'
   }
   return '点击麦克风开始对话'
 })
@@ -535,6 +541,53 @@ const setTranscribingCount = (delta: number): void => {
   transcribing.value = activeTranscriptionCount > 0
 }
 
+const normalizeVoiceKeywordCandidate = (text: string): string =>
+  text.replace(/[\s,.!?;:'"，。！？；：、…“”‘’（）()【】《》〈〉\[\]]/g, '').trim()
+
+const isVoiceExecutionTrigger = (text: string): boolean =>
+  normalizeVoiceKeywordCandidate(text) === voiceExecutionKeyword
+
+const clearPendingVoicePrompt = (): void => {
+  pendingVoicePromptParts = []
+  pendingVoicePromptText.value = ''
+}
+
+const appendPendingVoicePrompt = (prompt: string): void => {
+  const normalizedPrompt = prompt.trim()
+  if (!normalizedPrompt) {
+    return
+  }
+
+  pendingVoicePromptParts.push(normalizedPrompt)
+  pendingVoicePromptText.value = pendingVoicePromptParts.join('\n')
+}
+
+const executePendingVoicePrompt = (): boolean => {
+  const prompt = pendingVoicePromptText.value.trim()
+  if (!prompt) {
+    errorMessage.value = '已收到“执行”，但还没有识别到待执行内容。'
+    return false
+  }
+
+  clearPendingVoicePrompt()
+  enqueueVoicePrompt(prompt)
+  return true
+}
+
+const handleVoiceTranscript = (transcript: string): boolean => {
+  const normalizedTranscript = transcript.trim()
+  if (!normalizedTranscript) {
+    return false
+  }
+
+  if (isVoiceExecutionTrigger(normalizedTranscript)) {
+    return executePendingVoicePrompt()
+  }
+
+  appendPendingVoicePrompt(normalizedTranscript)
+  return true
+}
+
 const calculateRms = (samples: Float32Array): number => {
   let sum = 0
   for (const sample of samples) {
@@ -626,8 +679,9 @@ const processSpeechSegment = async (
     const result = await transcribeVoice(audio)
     const transcript = result.transcript.trim()
     if (transcript) {
-      enqueueVoicePrompt(transcript)
-      errorMessage.value = ''
+      if (handleVoiceTranscript(transcript)) {
+        errorMessage.value = ''
+      }
     } else if (result.status === 'not_configured') {
       errorMessage.value = result.message
     } else {
