@@ -107,6 +107,13 @@ class FileActionResult(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class WebSearchResult(BaseModel):
+    title: str
+    url: str
+    content: str
+    score: float = 0.0
+
+
 class ChatResponse(BaseModel):
     request_id: str
     model: str
@@ -115,6 +122,7 @@ class ChatResponse(BaseModel):
     tasks_created: list[TaskItem] = Field(default_factory=list)
     computer_actions: list[ComputerActionResult] = Field(default_factory=list)
     file_actions: list[FileActionResult] = Field(default_factory=list)
+    web_search_results: list[WebSearchResult] = Field(default_factory=list)
     workflow_events: list[AgentWorkflowEvent] = Field(default_factory=list)
 
 
@@ -127,6 +135,7 @@ ChatStreamEventType = Literal[
     "workflow",
     "computer_actions",
     "file_actions",
+    "web_search",
 ]
 
 
@@ -141,6 +150,7 @@ class ChatStreamEvent(BaseModel):
     tasks_created: list[TaskItem] = Field(default_factory=list)
     computer_actions: list[ComputerActionResult] = Field(default_factory=list)
     file_actions: list[FileActionResult] = Field(default_factory=list)
+    web_search_results: list[WebSearchResult] = Field(default_factory=list)
     workflow_step: str | None = None
     workflow_status: WorkflowStatus | None = None
     message: str | None = None
@@ -164,10 +174,15 @@ class AppSettingsResponse(BaseModel):
 
 
 class AppSettingsUpdate(BaseModel):
+    llm_provider: str | None = Field(default=None, min_length=1, max_length=100)
     llm_base_url: str | None = Field(default=None, min_length=1, max_length=500)
     llm_model: str | None = Field(default=None, min_length=1, max_length=200)
+    allow_remote_llm: bool | None = None
+    llm_api_key: str | None = Field(default=None, max_length=2000)
+    llm_api_key_env: str | None = Field(default=None, max_length=200)
     enable_thinking: bool | None = None
     default_max_tokens: int | None = Field(default=None, gt=0, le=8192)
+    request_timeout_seconds: float | None = Field(default=None, gt=0)
     workspace_path: str | None = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")

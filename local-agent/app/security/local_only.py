@@ -23,8 +23,11 @@ def ensure_allowed_model_url(url: str, *, allow_remote_llm: bool) -> None:
     if not host:
         raise ValueError("LLM_BASE_URL must include a hostname.")
 
-    if host in CLOUD_LLM_HOSTS:
-        raise ValueError(f"Cloud LLM host is not allowed for MVP: {host}")
+    if host in CLOUD_LLM_HOSTS and not allow_remote_llm:
+        raise ValueError(
+            "Remote LLM endpoints are disabled. "
+            f"Set allow_remote_llm=true before using cloud host: {host}"
+        )
 
     if not allow_remote_llm and host not in LOCAL_MODEL_HOSTS:
         raise ValueError(

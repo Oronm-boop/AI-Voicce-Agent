@@ -36,10 +36,15 @@ export interface AppSettingsResponse {
 }
 
 export interface AppSettingsUpdate {
+  llm_provider?: string
   llm_base_url?: string
   llm_model?: string
+  allow_remote_llm?: boolean
+  llm_api_key?: string
+  llm_api_key_env?: string
   enable_thinking?: boolean
   default_max_tokens?: number
+  request_timeout_seconds?: number
   workspace_path?: string
 }
 

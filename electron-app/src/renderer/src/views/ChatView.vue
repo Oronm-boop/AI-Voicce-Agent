@@ -188,6 +188,9 @@ const modelStatusText = computed(() => {
 })
 
 const inputStatusText = computed(() => {
+  if (sending.value) {
+    return '正在执行命令，语音监听已暂停'
+  }
   if (hearingSpeech.value) {
     return '听到语音，正在识别并暂存'
   }
@@ -201,10 +204,10 @@ const inputStatusText = computed(() => {
     return `还有 ${queuedVoicePromptCount.value} 条语音命令排队`
   }
   if (pendingVoicePromptText.value) {
-    return '已暂存语音命令，说“执行”后开始执行'
+    return '已暂存语音命令，说"执行"后开始执行'
   }
   if (listening.value) {
-    return '实时语音已开启，说出命令后用“执行”确认'
+    return '实时语音已开启，说出命令后用"执行"确认'
   }
   return '点击麦克风开始对话'
 })
@@ -667,6 +670,11 @@ const processSpeechSegment = async (
   samples: Float32Array,
   sourceSampleRate: number
 ): Promise<void> => {
+  // 命令执行期间，丢弃所有待转写的语音片段
+  if (sending.value) {
+    return
+  }
+
   const wavSamples = resampleAudio(samples, sourceSampleRate, targetRecordingSampleRate)
   const audio = encodeWav(wavSamples, targetRecordingSampleRate)
 
@@ -742,6 +750,15 @@ const handleAudioProcess = (event: AudioProcessingEvent): void => {
   output.fill(0)
 
   if (!listening.value) {
+    return
+  }
+
+  // 命令执行期间，暂停所有语音采集和 VAD 处理
+  if (sending.value) {
+    if (speechSegmentActive) {
+      resetSpeechSegment()
+    }
+    resetPreSpeechBuffer()
     return
   }
 

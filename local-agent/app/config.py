@@ -12,9 +12,18 @@ class Settings(BaseSettings):
     llm_provider: str = "ollama"
     llm_base_url: str = "http://127.0.0.1:11434"
     llm_model: str = "qwen2.5:0.5b"
+    llm_api_key: str = ""
+    llm_api_key_env: str = ""
     request_timeout_seconds: float = Field(default=120.0, gt=0)
     default_max_tokens: int = Field(default=2048, gt=0)
     enable_thinking: bool = False
+    windows_mcp_url: str = "http://127.0.0.1:8000/mcp"
+    windows_mcp_auth_token: str = ""
+    windows_mcp_timeout_seconds: float = Field(default=30.0, gt=0)
+    tavily_api_key: str = ""
+    tavily_search_depth: str = "basic"
+    tavily_max_results: int = 5
+    tavily_timeout_seconds: float = 15.0
     workspace_path: str = ""
     data_dir: str = "data"
     asr_provider: str = "sherpa-onnx"

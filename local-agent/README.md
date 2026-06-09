@@ -14,6 +14,22 @@
 
 默认只允许连接本机模型地址，例如 `127.0.0.1` 或 `localhost`，不调用云端大模型。
 
+电脑控制默认通过 Windows-MCP 执行。启动 `local-agent` 前请另开一个 Windows 终端运行：
+
+```powershell
+uvx windows-mcp serve --transport streamable-http --host 127.0.0.1 --port 8000
+```
+
+对应 `.env` 配置：
+
+```env
+WINDOWS_MCP_URL=http://127.0.0.1:8000/mcp/
+WINDOWS_MCP_AUTH_TOKEN=
+WINDOWS_MCP_TIMEOUT_SECONDS=30
+```
+
+工作空间文件增删改查也通过 Windows-MCP 执行：读写、追加、删除、列目录、查询信息走 `FileSystem` 工具，目录创建走 `PowerShell` 工具；后端仍会先校验路径必须位于已选择的工作空间内。
+
 ## Agent 工作流
 
 `POST /chat` 内部已接入 LangGraph。当前第一版图节点如下：

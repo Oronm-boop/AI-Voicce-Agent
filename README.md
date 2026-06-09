@@ -21,8 +21,8 @@
 | 连续语音输入 | 已实现基础版 | 前端使用 Web Audio API 做音频分段和简单 VAD，发送 WAV 到后端离线 ASR 接口。 |
 | 本地 ASR | 已实现接口 | 后端使用 `sherpa-onnx` 离线识别，模型缺失时返回 `not_configured`。 |
 | TTS 播报 | 已实现前端版 | 当前使用浏览器 `SpeechSynthesis` 播报，后端本地 TTS 仍是后续扩展点。 |
-| 本地电脑控制 | 初步实现 | 支持打开网页/应用、搜索、输入、快捷键、点击、滚动等低层动作；敏感动作要求确认。 |
-| 工作空间文件操作 | 初步实现 | 支持写入、追加、替换、删除、建目录；路径被限制在用户选择的工作空间内。 |
+| 本地电脑控制 | 初步实现 | 默认通过 Windows-MCP 执行打开网页/应用、搜索、输入、快捷键、点击、滚动、截图/屏幕状态等动作；敏感动作要求确认。 |
+| 工作空间文件操作 | 初步实现 | 通过 Windows-MCP 执行写入、追加、替换、清空、删除、读取、列目录、查询信息；路径被限制在用户选择的工作空间内。 |
 | 设置持久化 | 已实现 | 模型地址、模型名、thinking 开关、默认输出长度、工作空间路径写入 SQLite。 |
 | 知识库页面 | UI 原型 | 当前是静态技能/文档展示，RAG、索引、向量库尚未接入。 |
 | Windows 打包 | 已实现脚本 | `npm run build:win` 会先 PyInstaller 打包 Python 后端，再由 electron-builder 打包桌面端。 |
@@ -40,7 +40,7 @@ flowchart LR
   Agent --> LLM["Ollama 本地 LLM<br/>127.0.0.1:11434"]
   Agent --> ASR["sherpa-onnx ASR<br/>本地离线转写"]
   Agent --> DB["SQLite<br/>tasks / settings"]
-  Agent --> Tools["本地工具<br/>电脑控制 / 文件操作"]
+  Agent --> Tools["Windows-MCP 工具<br/>电脑控制 / 文件操作"]
 ```
 
 运行时进程关系：
@@ -213,6 +213,9 @@ DATA_DIR=data
 REQUEST_TIMEOUT_SECONDS=120
 DEFAULT_MAX_TOKENS=2048
 ENABLE_THINKING=false
+WINDOWS_MCP_URL=http://127.0.0.1:8000/mcp/
+WINDOWS_MCP_AUTH_TOKEN=
+WINDOWS_MCP_TIMEOUT_SECONDS=30
 ```
 
 ASR 配置：
@@ -264,7 +267,7 @@ URL 安全策略由 `security/local_only.py` 提供：
 | `chat` | 普通问题 | 直接调用本地模型回复。 |
 | `task_plan` | 包含“拆任务、任务拆解、计划、待办、todo、步骤、排期”等关键词 | 先生成用户回复，再要求模型输出任务 JSON，校验后写入 SQLite。 |
 | `computer_control` | 包含“打开、启动、搜索、点击、输入、快捷键、滚动”等控制类表达 | 生成本地电脑动作计划并执行；敏感动作返回确认要求。 |
-| `file_control` | 包含文件/目录/代码路径和新建、修改、替换、删除等动作 | 在工作空间内规划并执行文件操作。 |
+| `file_control` | 包含文件/目录/代码路径和新建、修改、替换、删除、读取、查询等动作 | 在工作空间内规划文件操作，并通过 Windows-MCP 执行。 |
 
 任务拆解流程：
 
@@ -294,6 +297,18 @@ URL 安全策略由 `security/local_only.py` 提供：
 
 文件：`local-agent/app/agent/computer_control.py`
 
+默认电脑控制后端为 Windows-MCP。请先在 Windows 端启动 MCP server：
+
+```powershell
+uvx windows-mcp serve --transport streamable-http --host 127.0.0.1 --port 8000
+```
+
+如果你给 Windows-MCP 配置了 `--auth-key`，在 `local-agent/.env` 中设置：
+
+```env
+WINDOWS_MCP_AUTH_TOKEN=你的token
+```
+
 支持工具：
 
 | 工具 | 说明 |
@@ -301,12 +316,15 @@ URL 安全策略由 `security/local_only.py` 提供：
 | `open_url` | 打开指定网页。 |
 | `web_search` | 使用 Bing 搜索关键词。 |
 | `open_app` | 打开常见本地应用或指定可执行路径。 |
-| `type_text` | 向当前焦点窗口输入文本，优先使用剪贴板粘贴。 |
+| `type_text` | 通过 Windows-MCP 向当前焦点窗口或指定元素输入文本。 |
 | `press_key` | 按下单个按键。 |
 | `hotkey` | 执行快捷键组合。 |
-| `click` | 点击当前位置或指定坐标。 |
-| `scroll` | 滚动页面。 |
+| `click` | 点击指定坐标或 `Snapshot` 返回的元素 label。 |
+| `scroll` | 在当前位置、指定坐标或元素 label 上滚动。 |
 | `wait` | 等待指定秒数。 |
+| `screenshot` | 获取快速屏幕截图摘要。 |
+| `snapshot` | 获取窗口/UI 树/可交互元素状态。 |
+| `wait_for` | 等待文本、窗口或元素出现。 |
 
 敏感关键词包括删除、卸载、格式化、付款、支付、转账、下单、购买、发送邮件、发送消息、提交等。命中后不会直接执行，而是返回 `confirm_required`。
 
@@ -317,6 +335,8 @@ URL 安全策略由 `security/local_only.py` 提供：
 - `local-agent/app/agent/file_control.py`
 - `local-agent/app/security/workspace.py`
 
+文件增删改查默认通过 Windows-MCP 执行。后端只做路径规划和工作空间边界校验；实际读写、追加、删除、列目录、查询信息由 Windows-MCP `FileSystem` 工具完成。目录创建使用 Windows-MCP `PowerShell` 工具执行 `New-Item`。
+
 支持动作：
 
 | 动作 | 说明 |
@@ -324,8 +344,12 @@ URL 安全策略由 `security/local_only.py` 提供：
 | `write_file` | 写入完整文件内容，可覆盖。 |
 | `append_file` | 向文件追加内容。 |
 | `replace_in_file` | 精确替换文件内文本片段。 |
+| `clear_file` | 清空文件内容但保留文件。 |
 | `delete_path` | 删除文件或目录。 |
 | `create_directory` | 创建目录。 |
+| `read_file` | 读取文件文本内容。 |
+| `list_directory` | 列出目录内容。 |
+| `file_info` | 查询文件或目录信息。 |
 
 安全边界：
 
@@ -333,7 +357,7 @@ URL 安全策略由 `security/local_only.py` 提供：
 - 相对路径会解析到工作空间内。
 - 即使用户传入绝对路径，也必须位于当前工作空间内部。
 - 超出工作空间范围会抛出 `WorkspaceAccessError`。
-- 文件上下文读取限制为 80 KB，最多向模型提供 24,000 字符。
+- 文件上下文通过 Windows-MCP 读取，最多向模型提供 24,000 字符。
 
 ### 语音识别
 
@@ -564,7 +588,7 @@ extraResources:
 - 本地模型地址校验：默认只允许 `127.0.0.1`、`localhost`、`::1`。
 - 云端 LLM 域名黑名单：禁止常见云端大模型 API host。
 - Renderer 系统能力白名单：只通过 Preload 暴露工作空间选择/打开。
-- 文件操作工作空间沙箱：所有路径必须落在用户选择的工作空间内。
+- 文件操作工作空间边界：所有路径必须落在用户选择的工作空间内，实际文件增删改查由 Windows-MCP 执行。
 - 敏感电脑动作确认：支付、下单、删除、发送内容等动作不会自动执行。
 - SQLite 设置白名单：只允许保存指定配置键。
 

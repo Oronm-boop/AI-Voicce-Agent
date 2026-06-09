@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
-import subprocess
-import time
-import webbrowser
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urlparse
 
+from app.agent.windows_mcp_client import WindowsMcpClient, windows_mcp_result_text
+from app.config import Settings
 from app.models.ollama_client import OllamaClient, OllamaClientError
 from app.models.schemas import ChatMessage, ChatRequest, ComputerActionResult
 
@@ -26,6 +22,9 @@ ALLOWED_TOOLS = {
     "click",
     "scroll",
     "wait",
+    "screenshot",
+    "snapshot",
+    "wait_for",
 }
 
 CONTROL_KEYWORDS = (
@@ -43,6 +42,11 @@ CONTROL_KEYWORDS = (
     "按下",
     "快捷键",
     "滚动",
+    "截图",
+    "屏幕",
+    "观察",
+    "查看屏幕",
+    "等待",
     "浏览器",
     "网页",
     "app",
@@ -72,6 +76,38 @@ SENSITIVE_KEYWORDS = (
     "提交",
 )
 
+ANSWER_REQUEST_KEYWORDS = (
+    "告诉我",
+    "回答我",
+    "跟我说",
+    "给我说",
+    "说一下",
+    "汇报",
+    "结果",
+    "答案",
+    "是什么",
+    "是多少",
+    "怎么样",
+    "天气",
+    "温度",
+    "今天",
+    "现在",
+    "最新",
+)
+
+BROWSER_LOOKUP_KEYWORDS = (
+    "浏览器",
+    "网页",
+    "搜索",
+    "搜一下",
+    "查一下",
+    "查询",
+    "百度",
+    "谷歌",
+    "bing",
+    "必应",
+)
+
 WEBSITE_ALIASES = {
     "百度": "https://www.baidu.com",
     "谷歌": "https://www.google.com",
@@ -88,42 +124,7 @@ WEBSITE_ALIASES = {
     "outlook": "https://outlook.live.com/mail",
 }
 
-APP_ALIASES = {
-    "记事本": "notepad.exe",
-    "notepad": "notepad.exe",
-    "计算器": "calc.exe",
-    "calculator": "calc.exe",
-    "画图": "mspaint.exe",
-    "资源管理器": "explorer.exe",
-    "文件资源管理器": "explorer.exe",
-    "explorer": "explorer.exe",
-    "命令行": "cmd.exe",
-    "cmd": "cmd.exe",
-    "powershell": "powershell.exe",
-    "浏览器": "msedge.exe",
-    "edge": "msedge.exe",
-    "chrome": "chrome.exe",
-    "谷歌浏览器": "chrome.exe",
-    "微信": "WeChat.exe",
-    "wechat": "WeChat.exe",
-}
 
-WINDOWS_COMMON_APP_PATHS = {
-    "chrome.exe": (
-        r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
-        r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
-        r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
-    ),
-    "msedge.exe": (
-        r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
-        r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
-    ),
-    "WeChat.exe": (
-        r"%ProgramFiles%\Tencent\WeChat\WeChat.exe",
-        r"%ProgramFiles(x86)%\Tencent\WeChat\WeChat.exe",
-        r"%LocalAppData%\Tencent\WeChat\WeChat.exe",
-    ),
-}
 
 KEY_ALIASES = {
     "回车": "enter",
@@ -147,16 +148,19 @@ KEY_ALIASES = {
 CONTROL_SYSTEM_PROMPT = """
 你是本地电脑控制指令规划器。请把用户的一句话转换成 JSON，不要输出解释文字。
 
-允许的工具：
+允许的工具全部由 Windows-MCP 执行：
 - open_url: {"url": "https://example.com"}
 - web_search: {"query": "搜索关键词"}
-- open_app: {"target": "应用名、exe 名或绝对路径"}
-- type_text: {"text": "要输入的文字"}
+- open_app: {"target": "应用名称"}，target 直接填写用户说的应用名（中文名或英文名均可，如"微信"、"记事本"、"Chrome"），不要自行转换为 exe 文件名
+- type_text: {"text": "要输入的文字"}，可选 x/y 或 label 表示输入到指定元素
 - press_key: {"key": "enter"}
 - hotkey: {"keys": ["ctrl", "l"]}
-- click: {"x": 100, "y": 200}，没有坐标时可省略 x/y 表示点击当前位置
-- scroll: {"clicks": -5}，负数向下，正数向上
+- click: {"x": 100, "y": 200} 或 {"label": 3}，点击必须有坐标或 Snapshot 返回的 label
+- scroll: {"clicks": -5}，负数向下，正数向上，可选 x/y 或 label
 - wait: {"seconds": 1}
+- screenshot: {"use_annotation": false}
+- snapshot: {"use_vision": false, "use_dom": false}
+- wait_for: {"condition": "text_exists", "text": "目标文本", "timeout": 10}
 
 只返回这个 JSON 结构：
 {
@@ -168,6 +172,8 @@ CONTROL_SYSTEM_PROMPT = """
 }
 
 如果用户只是询问“怎么做”，should_control 为 false。
+如果用户要求打开网页、搜索或查询后“告诉我/回答我/汇报结果”，
+动作必须包含读取结果所需的 wait 和 snapshot。
 支付、下单、删除、卸载、发送邮件/消息等敏感或不可逆操作不要执行，
 requires_confirmation 设为 true，并在 confirmation_reason 里说明需要用户确认。
 """.strip()
@@ -227,12 +233,13 @@ async def plan_computer_control(
         return _parse_control_plan(response.reply)
     except (OllamaClientError, ValueError) as exc:
         return ComputerControlPlan(
-            summary=f"我理解这是电脑控制请求，但本地工具规划失败：{exc}",
+            summary=f"我理解这是电脑控制请求，但 Windows-MCP 工具规划失败：{exc}",
         )
 
 
 def execute_computer_control_plan(
     plan: ComputerControlPlan,
+    settings: Settings | None = None,
 ) -> list[ComputerActionResult]:
     if plan.requires_confirmation:
         return [
@@ -248,14 +255,19 @@ def execute_computer_control_plan(
             ComputerActionResult(
                 tool="none",
                 status="skipped",
-                message="没有生成可执行的本地电脑动作。",
+                message="没有生成可执行的 Windows-MCP 电脑动作。",
             )
         ]
 
+    settings = settings or Settings()
+    client = _create_windows_mcp_client(settings)
     results: list[ComputerActionResult] = []
-    for action in plan.actions[:8]:
-        results.append(_execute_action(action))
-    return results
+    try:
+        for action in plan.actions[:8]:
+            results.append(_execute_action(action, client))
+        return results
+    finally:
+        client.close()
 
 
 def build_computer_control_reply(
@@ -267,9 +279,9 @@ def build_computer_control_reply(
         return f"需要确认：{reason}"
 
     if not results:
-        return plan.summary or "没有可执行的本地电脑动作。"
+        return plan.summary or "没有可执行的 Windows-MCP 电脑动作。"
 
-    lines = [plan.summary or "已执行本地电脑控制指令。"]
+    lines = [plan.summary or "已执行 Windows-MCP 电脑控制指令。"]
     for result in results:
         prefix = {
             "success": "完成",
@@ -308,9 +320,21 @@ def _build_heuristic_plan(request: ChatRequest) -> ComputerControlPlan | None:
 
     search_query = _extract_search_query(text)
     if search_query:
+        include_snapshot = _should_collect_lookup_snapshot(text)
         return ComputerControlPlan(
-            summary=f"打开浏览器搜索：{search_query}",
-            actions=[ComputerAction(tool="web_search", args={"query": search_query})],
+            summary=(
+                f"打开浏览器搜索并读取结果：{search_query}"
+                if include_snapshot
+                else f"打开浏览器搜索：{search_query}"
+            ),
+            actions=_browser_lookup_actions(search_query, include_snapshot=include_snapshot),
+        )
+
+    information_query = _extract_information_query(text)
+    if information_query and _requests_browser_lookup(text):
+        return ComputerControlPlan(
+            summary=f"打开浏览器查询并读取结果：{information_query}",
+            actions=_browser_lookup_actions(information_query, include_snapshot=True),
         )
 
     open_target = _extract_open_target(text)
@@ -345,7 +369,7 @@ def _build_heuristic_plan(request: ChatRequest) -> ComputerControlPlan | None:
         return None
 
     return ComputerControlPlan(
-        summary="执行本地电脑控制指令。",
+        summary="执行 Windows-MCP 电脑控制指令。",
         actions=actions,
     )
 
@@ -369,33 +393,16 @@ def _parse_control_plan(reply: str) -> ComputerControlPlan:
         actions.append(ComputerAction(tool=tool, args=args))
 
     return ComputerControlPlan(
-        summary=str(payload.get("summary") or "执行本地电脑控制指令。"),
+        summary=str(payload.get("summary") or "执行 Windows-MCP 电脑控制指令。"),
         actions=actions,
         requires_confirmation=bool(payload.get("requires_confirmation", False)),
         confirmation_reason=str(payload.get("confirmation_reason") or ""),
     )
 
 
-def _execute_action(action: ComputerAction) -> ComputerActionResult:
+def _execute_action(action: ComputerAction, client: WindowsMcpClient) -> ComputerActionResult:
     try:
-        if action.tool == "open_url":
-            return _open_url(str(action.args.get("url", "")))
-        if action.tool == "web_search":
-            return _web_search(str(action.args.get("query", "")))
-        if action.tool == "open_app":
-            return _open_app(str(action.args.get("target", "")))
-        if action.tool == "type_text":
-            return _type_text(str(action.args.get("text", "")))
-        if action.tool == "press_key":
-            return _press_key(str(action.args.get("key", "")))
-        if action.tool == "hotkey":
-            return _hotkey(action.args.get("keys", []))
-        if action.tool == "click":
-            return _click(action.args)
-        if action.tool == "scroll":
-            return _scroll(action.args)
-        if action.tool == "wait":
-            return _wait(action.args)
+        return _execute_mcp_action(action, client)
     except Exception as exc:  # noqa: BLE001 - surface tool failures to the chat UI.
         return ComputerActionResult(
             tool=action.tool,
@@ -403,14 +410,52 @@ def _execute_action(action: ComputerAction) -> ComputerActionResult:
             message=str(exc) or exc.__class__.__name__,
         )
 
+
+def _execute_mcp_action(
+    action: ComputerAction,
+    client: WindowsMcpClient,
+) -> ComputerActionResult:
+    if action.tool == "open_url":
+        return _mcp_open_url(client, str(action.args.get("url", "")))
+    if action.tool == "web_search":
+        return _mcp_web_search(client, str(action.args.get("query", "")))
+    if action.tool == "open_app":
+        return _mcp_open_app(client, str(action.args.get("target", "")))
+    if action.tool == "type_text":
+        return _mcp_type_text(client, action.args)
+    if action.tool == "press_key":
+        return _mcp_press_key(client, str(action.args.get("key", "")))
+    if action.tool == "hotkey":
+        return _mcp_hotkey(client, action.args.get("keys", []))
+    if action.tool == "click":
+        return _mcp_click(client, action.args)
+    if action.tool == "scroll":
+        return _mcp_scroll(client, action.args)
+    if action.tool == "wait":
+        return _mcp_wait(client, action.args)
+    if action.tool == "screenshot":
+        return _mcp_screenshot(client, action.args)
+    if action.tool == "snapshot":
+        return _mcp_snapshot(client, action.args)
+    if action.tool == "wait_for":
+        return _mcp_wait_for(client, action.args)
+
     return ComputerActionResult(
         tool=action.tool,
         status="error",
-        message=f"未知本地工具：{action.tool}",
+        message=f"Windows-MCP 后端不支持工具：{action.tool}",
     )
 
 
-def _open_url(raw_url: str) -> ComputerActionResult:
+def _create_windows_mcp_client(settings: Settings) -> WindowsMcpClient:
+    return WindowsMcpClient(
+        settings.windows_mcp_url,
+        auth_token=settings.windows_mcp_auth_token,
+        timeout_seconds=settings.windows_mcp_timeout_seconds,
+    )
+
+
+def _mcp_open_url(client: WindowsMcpClient, raw_url: str) -> ComputerActionResult:
     url = _normalize_url(raw_url)
     if not url:
         return ComputerActionResult(
@@ -419,18 +464,16 @@ def _open_url(raw_url: str) -> ComputerActionResult:
             message="缺少要打开的网址。",
         )
 
-    opened = webbrowser.open(url, new=2)
-    status = "success" if opened else "error"
-    message = f"已打开网页 {url}" if opened else f"无法打开网页 {url}"
+    _mcp_open_url_sequence(client, url)
     return ComputerActionResult(
         tool="open_url",
-        status=status,
-        message=message,
-        details={"url": url},
+        status="success",
+        message=f"已通过 Windows-MCP 打开网页 {url}",
+        details={"url": url, "backend": "windows-mcp"},
     )
 
 
-def _web_search(query: str) -> ComputerActionResult:
+def _mcp_web_search(client: WindowsMcpClient, query: str) -> ComputerActionResult:
     query = query.strip()
     if not query:
         return ComputerActionResult(
@@ -440,18 +483,24 @@ def _web_search(query: str) -> ComputerActionResult:
         )
 
     url = f"https://www.bing.com/search?q={quote_plus(query)}"
-    opened = webbrowser.open(url, new=2)
-    status = "success" if opened else "error"
-    message = f"已打开浏览器搜索：{query}" if opened else f"无法打开搜索：{query}"
+    _mcp_open_url_sequence(client, url)
     return ComputerActionResult(
         tool="web_search",
-        status=status,
-        message=message,
-        details={"query": query, "url": url},
+        status="success",
+        message=f"已通过 Windows-MCP 打开浏览器搜索：{query}",
+        details={"query": query, "url": url, "backend": "windows-mcp"},
     )
 
 
-def _open_app(target: str) -> ComputerActionResult:
+def _mcp_open_url_sequence(client: WindowsMcpClient, url: str) -> None:
+    _mcp_call(client, "Shortcut", {"shortcut": "win+r"})
+    _mcp_call(client, "Wait", {"duration": 1})
+    _mcp_call(client, "Clipboard", {"mode": "set", "text": url})
+    _mcp_call(client, "Shortcut", {"shortcut": "ctrl+v"})
+    _mcp_call(client, "Shortcut", {"shortcut": "enter"})
+
+
+def _mcp_open_app(client: WindowsMcpClient, target: str) -> ComputerActionResult:
     target = _trim_target(target)
     if not target:
         return ComputerActionResult(
@@ -460,35 +509,28 @@ def _open_app(target: str) -> ComputerActionResult:
             message="缺少要打开的应用名称。",
         )
 
-    command = _resolve_app_command(target)
-    if command is None:
-        return ComputerActionResult(
-            tool="open_app",
-            status="error",
-            message=f"未找到应用：{target}。请说常见应用名、exe 名或完整路径。",
-        )
-
-    if isinstance(command, Path):
-        _start_path(command)
-    else:
-        subprocess.Popen(  # noqa: S603 - local desktop tool invocation by request.
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-        )
-
+    response_text = _mcp_call(client, "App", {"mode": "launch", "name": target})
+    lowered_response = response_text.lower()
+    status = "error" if "not found" in lowered_response else "success"
+    message = (
+        f"Windows-MCP 未找到应用：{target}。"
+        if status == "error"
+        else f"已通过 Windows-MCP 启动应用：{target}"
+    )
     return ComputerActionResult(
         tool="open_app",
-        status="success",
-        message=f"已启动应用：{target}",
-        details={"target": target},
+        status=status,
+        message=message,
+        details={
+            "target": target,
+            "mcp_response": response_text,
+            "backend": "windows-mcp",
+        },
     )
 
 
-def _type_text(text: str) -> ComputerActionResult:
-    text = text.strip()
+def _mcp_type_text(client: WindowsMcpClient, args: dict[str, Any]) -> ComputerActionResult:
+    text = str(args.get("text", "")).strip()
     if not text:
         return ComputerActionResult(
             tool="type_text",
@@ -496,24 +538,28 @@ def _type_text(text: str) -> ComputerActionResult:
             message="缺少要输入的文字。",
         )
 
-    pyautogui = _load_pyautogui()
-    try:
-        import pyperclip
-
-        pyperclip.copy(text)
-        pyautogui.hotkey("ctrl", "v")
-    except ImportError:
-        pyautogui.write(text, interval=0.01)
+    loc = _mcp_loc_from_args(args)
+    label = _mcp_label_from_args(args)
+    if loc is not None or label is not None:
+        tool_args: dict[str, Any] = {"text": text}
+        if loc is not None:
+            tool_args["loc"] = loc
+        if label is not None:
+            tool_args["label"] = label
+        _mcp_call(client, "Type", tool_args)
+    else:
+        _mcp_call(client, "Clipboard", {"mode": "set", "text": text})
+        _mcp_call(client, "Shortcut", {"shortcut": "ctrl+v"})
 
     return ComputerActionResult(
         tool="type_text",
         status="success",
-        message="已向当前焦点窗口输入文字。",
-        details={"text_length": len(text)},
+        message="已通过 Windows-MCP 向当前焦点窗口输入文字。",
+        details={"text_length": len(text), "backend": "windows-mcp"},
     )
 
 
-def _press_key(key: str) -> ComputerActionResult:
+def _mcp_press_key(client: WindowsMcpClient, key: str) -> ComputerActionResult:
     normalized_key = _normalize_key(key)
     if not normalized_key:
         return ComputerActionResult(
@@ -522,17 +568,17 @@ def _press_key(key: str) -> ComputerActionResult:
             message="缺少要按下的按键。",
         )
 
-    pyautogui = _load_pyautogui()
-    pyautogui.press(normalized_key)
+    shortcut = _mcp_shortcut_name(normalized_key)
+    _mcp_call(client, "Shortcut", {"shortcut": shortcut})
     return ComputerActionResult(
         tool="press_key",
         status="success",
-        message=f"已按下按键：{normalized_key}",
-        details={"key": normalized_key},
+        message=f"已通过 Windows-MCP 按下按键：{normalized_key}",
+        details={"key": normalized_key, "backend": "windows-mcp"},
     )
 
 
-def _hotkey(keys: Any) -> ComputerActionResult:
+def _mcp_hotkey(client: WindowsMcpClient, keys: Any) -> ComputerActionResult:
     if isinstance(keys, str):
         raw_keys = re.split(r"[+\s,，]+", keys)
     elif isinstance(keys, list):
@@ -549,117 +595,214 @@ def _hotkey(keys: Any) -> ComputerActionResult:
             message="缺少快捷键组合。",
         )
 
-    pyautogui = _load_pyautogui()
-    pyautogui.hotkey(*normalized_keys)
+    shortcut = "+".join(_mcp_shortcut_name(key) for key in normalized_keys)
+    _mcp_call(client, "Shortcut", {"shortcut": shortcut})
     return ComputerActionResult(
         tool="hotkey",
         status="success",
-        message=f"已按下快捷键：{'+'.join(normalized_keys)}",
-        details={"keys": normalized_keys},
+        message=f"已通过 Windows-MCP 按下快捷键：{'+'.join(normalized_keys)}",
+        details={"keys": normalized_keys, "backend": "windows-mcp"},
     )
 
 
-def _click(args: dict[str, Any]) -> ComputerActionResult:
-    pyautogui = _load_pyautogui()
-    x = args.get("x")
-    y = args.get("y")
-    if x is None or y is None:
-        pyautogui.click()
-        message = "已点击当前鼠标位置。"
-        details: dict[str, Any] = {}
-    else:
-        pyautogui.click(int(x), int(y))
-        message = f"已点击坐标：{int(x)}, {int(y)}"
-        details = {"x": int(x), "y": int(y)}
+def _mcp_click(client: WindowsMcpClient, args: dict[str, Any]) -> ComputerActionResult:
+    loc = _mcp_loc_from_args(args)
+    label = _mcp_label_from_args(args)
+    if loc is None and label is None:
+        return ComputerActionResult(
+            tool="click",
+            status="error",
+            message="Windows-MCP 点击需要坐标 x/y 或 Snapshot 返回的元素 label。",
+        )
 
+    button = str(args.get("button") or "left").lower()
+    if button not in {"left", "right", "middle"}:
+        button = "left"
+    clicks = max(0, min(int(args.get("clicks", 1)), 2))
+    tool_args: dict[str, Any] = {"button": button, "clicks": clicks}
+    if loc is not None:
+        tool_args["loc"] = loc
+    if label is not None:
+        tool_args["label"] = label
+
+    _mcp_call(client, "Click", tool_args)
+    detail_target: dict[str, Any] = (
+        {"label": label} if label is not None else {"x": loc[0], "y": loc[1]}
+    )
     return ComputerActionResult(
         tool="click",
         status="success",
-        message=message,
-        details=details,
+        message=(
+            f"已通过 Windows-MCP 点击元素 label={label}。"
+            if label is not None
+            else f"已通过 Windows-MCP 点击坐标：{loc[0]}, {loc[1]}"
+        ),
+        details={**detail_target, "button": button, "clicks": clicks, "backend": "windows-mcp"},
     )
 
 
-def _scroll(args: dict[str, Any]) -> ComputerActionResult:
+def _mcp_scroll(client: WindowsMcpClient, args: dict[str, Any]) -> ComputerActionResult:
     clicks = int(args.get("clicks", -5))
-    pyautogui = _load_pyautogui()
-    pyautogui.scroll(clicks)
-    direction = "向上" if clicks > 0 else "向下"
+    loc = _mcp_loc_from_args(args)
+    label = _mcp_label_from_args(args)
+    direction = str(args.get("direction") or "").lower()
+    if direction not in {"up", "down", "left", "right"}:
+        direction = "up" if clicks > 0 else "down"
+    scroll_type = "horizontal" if direction in {"left", "right"} else "vertical"
+
+    tool_args: dict[str, Any] = {
+        "type": scroll_type,
+        "direction": direction,
+        "wheel_times": max(1, abs(clicks)),
+    }
+    if loc is not None:
+        tool_args["loc"] = loc
+    if label is not None:
+        tool_args["label"] = label
+
+    _mcp_call(client, "Scroll", tool_args)
+    direction_text = {
+        "up": "向上",
+        "down": "向下",
+        "left": "向左",
+        "right": "向右",
+    }[direction]
     return ComputerActionResult(
         tool="scroll",
         status="success",
-        message=f"已{direction}滚动。",
-        details={"clicks": clicks},
+        message=f"已通过 Windows-MCP {direction_text}滚动。",
+        details={"clicks": clicks, "direction": direction, "backend": "windows-mcp"},
     )
 
 
-def _wait(args: dict[str, Any]) -> ComputerActionResult:
+def _mcp_wait(client: WindowsMcpClient, args: dict[str, Any]) -> ComputerActionResult:
     seconds = max(0.0, min(float(args.get("seconds", 1)), 30.0))
-    time.sleep(seconds)
+    if seconds > 0:
+        _mcp_call(client, "Wait", {"duration": max(1, int(round(seconds)))})
     return ComputerActionResult(
         tool="wait",
         status="success",
-        message=f"已等待 {seconds:.1f} 秒。",
-        details={"seconds": seconds},
+        message=f"已通过 Windows-MCP 等待 {seconds:.1f} 秒。",
+        details={"seconds": seconds, "backend": "windows-mcp"},
     )
 
 
-def _resolve_app_command(target: str) -> list[str] | Path | None:
-    direct_path = Path(target).expanduser()
-    if direct_path.exists():
-        return direct_path
-
-    alias = _lookup_alias(target, APP_ALIASES)
-    executable = alias or target
-
-    common_path = _find_common_windows_app(executable)
-    if common_path is not None:
-        return common_path
-
-    found = shutil.which(executable) or shutil.which(f"{executable}.exe")
-    if found:
-        return [found]
-
-    if alias and os.name == "nt":
-        return [alias]
-
-    return None
-
-
-def _start_path(path: Path) -> None:
-    if os.name == "nt":
-        os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606
-        return
-    subprocess.Popen(  # noqa: S603 - local desktop tool invocation by request.
-        [str(path)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
+def _mcp_screenshot(client: WindowsMcpClient, args: dict[str, Any]) -> ComputerActionResult:
+    tool_args = {
+        "use_annotation": _mcp_bool_arg(args.get("use_annotation", False)),
+    }
+    response_text = _mcp_call(client, "Screenshot", tool_args)
+    return ComputerActionResult(
+        tool="screenshot",
+        status="success",
+        message=response_text or "已通过 Windows-MCP 截取屏幕。",
+        details={"backend": "windows-mcp"},
     )
 
 
-def _find_common_windows_app(executable: str) -> Path | None:
-    if os.name != "nt":
+def _mcp_snapshot(client: WindowsMcpClient, args: dict[str, Any]) -> ComputerActionResult:
+    tool_args = {
+        "use_vision": _mcp_bool_arg(args.get("use_vision", False)),
+        "use_dom": _mcp_bool_arg(args.get("use_dom", False)),
+        "use_annotation": _mcp_bool_arg(args.get("use_annotation", True)),
+        "use_ui_tree": _mcp_bool_arg(args.get("use_ui_tree", True)),
+    }
+    response_text = _mcp_call(client, "Snapshot", tool_args, max_length=6000)
+    return ComputerActionResult(
+        tool="snapshot",
+        status="success",
+        message=_compact_text(response_text) or "已通过 Windows-MCP 获取屏幕状态。",
+        details={"backend": "windows-mcp", "snapshot_text": response_text},
+    )
+
+
+def _mcp_wait_for(client: WindowsMcpClient, args: dict[str, Any]) -> ComputerActionResult:
+    condition = str(args.get("condition") or "text_exists")
+    tool_args: dict[str, Any] = {
+        "condition": condition,
+        "timeout": max(0.1, min(float(args.get("timeout", 10)), 120.0)),
+        "interval": max(0.1, min(float(args.get("interval", 0.25)), 5.0)),
+        "use_dom": _mcp_bool_arg(args.get("use_dom", False)),
+    }
+    if args.get("text") is not None:
+        tool_args["text"] = str(args.get("text"))
+    if args.get("window_name") is not None:
+        tool_args["window_name"] = str(args.get("window_name"))
+
+    response_text = _mcp_call(client, "WaitFor", tool_args)
+    return ComputerActionResult(
+        tool="wait_for",
+        status="success",
+        message=response_text or "Windows-MCP 等待条件已满足。",
+        details={"condition": condition, "backend": "windows-mcp"},
+    )
+
+
+def _mcp_call(
+    client: WindowsMcpClient,
+    tool: str,
+    args: dict[str, Any],
+    *,
+    max_length: int = 1200,
+) -> str:
+    result = client.call_tool(tool, args)
+    return windows_mcp_result_text(result, max_length=max_length)
+
+
+def _compact_text(text: str, *, max_length: int = 1200) -> str:
+    value = text.strip()
+    if len(value) <= max_length:
+        return value
+    return f"{value[:max_length]}..."
+
+
+def _target_to_mcp_app_name(target: str) -> str:
+    """直接透传 LLM 给出的应用名，不做任何别名映射。"""
+    return target.strip()
+
+
+def _mcp_loc_from_args(args: dict[str, Any]) -> list[int] | None:
+    loc = args.get("loc")
+    if isinstance(loc, list) and len(loc) == 2:
+        return [int(loc[0]), int(loc[1])]
+
+    x = args.get("x")
+    y = args.get("y")
+    if x is None or y is None:
         return None
-
-    for raw_path in WINDOWS_COMMON_APP_PATHS.get(executable, ()):
-        path = Path(os.path.expandvars(raw_path))
-        if path.exists():
-            return path
-    return None
+    return [int(x), int(y)]
 
 
-def _load_pyautogui():
-    try:
-        import pyautogui
-    except ImportError as exc:
-        raise RuntimeError(
-            "需要安装 pyautogui 才能控制鼠标和键盘，请在 local-agent 中安装依赖。"
-        ) from exc
+def _mcp_label_from_args(args: dict[str, Any]) -> int | None:
+    label = args.get("label")
+    if label is None:
+        return None
+    return int(label)
 
-    pyautogui.FAILSAFE = True
-    pyautogui.PAUSE = 0.05
-    return pyautogui
+
+def _mcp_bool_arg(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _mcp_shortcut_name(key: str) -> str:
+    aliases = {
+        "win": "win",
+        "ctrl": "ctrl",
+        "control": "ctrl",
+        "esc": "esc",
+        "escape": "esc",
+        "enter": "enter",
+        "space": "space",
+        "delete": "delete",
+        "backspace": "backspace",
+        "up": "up",
+        "down": "down",
+        "left": "left",
+        "right": "right",
+    }
+    return aliases.get(key.lower(), key.lower())
 
 
 def _clean_command_text(text: str) -> str:
@@ -668,13 +811,61 @@ def _clean_command_text(text: str) -> str:
 
 def _extract_search_query(text: str) -> str:
     match = re.search(
-        r"(?:打开.{0,8}(?:浏览器|网页).{0,8})?(?:搜索|搜一下|查一下|百度一下|帮我搜|帮我查)(.+)",
+        r"(?:打开.{0,8}(?:浏览器|网页).{0,8})?(?:搜索|搜一下|查一下|查询|百度一下|帮我搜|帮我查)(.+)",
         text,
         flags=re.IGNORECASE,
     )
     if not match:
         return ""
-    return _trim_target(match.group(1))
+    return _trim_target(_strip_answer_tail(match.group(1)))
+
+
+def _extract_information_query(text: str) -> str:
+    match = re.search(
+        r"(?:告诉我|回答我|跟我说|给我说|说一下|看一下|看看)(.+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return ""
+
+    query = _trim_target(match.group(1))
+    if query in {"结果", "答案", "查询结果", "搜索结果"}:
+        return ""
+    return query
+
+
+def _strip_answer_tail(text: str) -> str:
+    return re.split(
+        r"(?:并|然后|再)?(?:告诉我|回答我|跟我说|给我说|说一下|汇报|输出)(?:结果|答案)?",
+        text,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+
+
+def _browser_lookup_actions(query: str, *, include_snapshot: bool) -> list[ComputerAction]:
+    actions = [ComputerAction(tool="web_search", args={"query": query})]
+    if include_snapshot:
+        actions.extend(
+            [
+                ComputerAction(tool="wait", args={"seconds": 3}),
+                ComputerAction(
+                    tool="snapshot",
+                    args={"use_dom": True, "use_ui_tree": True},
+                ),
+            ]
+        )
+    return actions
+
+
+def _should_collect_lookup_snapshot(text: str) -> bool:
+    return any(keyword in text for keyword in ANSWER_REQUEST_KEYWORDS)
+
+
+def _requests_browser_lookup(text: str) -> bool:
+    lowered = text.lower()
+    return any(keyword in lowered or keyword in text for keyword in BROWSER_LOOKUP_KEYWORDS)
 
 
 def _extract_open_target(text: str) -> str:
@@ -720,9 +911,13 @@ def _extract_click_args(text: str) -> dict[str, Any] | None:
     if "点击" not in text and "点一下" not in text:
         return None
 
+    label_match = re.search(r"label\s*=?\s*(\d{1,5})", text, flags=re.IGNORECASE)
+    if label_match:
+        return {"label": int(label_match.group(1))}
+
     match = re.search(r"(\d{1,5})\s*[,， ]\s*(\d{1,5})", text)
     if not match:
-        return {}
+        return None
     return {"x": int(match.group(1)), "y": int(match.group(2))}
 
 
@@ -785,3 +980,107 @@ def _normalize_key(key: str) -> str:
     if not normalized:
         return ""
     return KEY_ALIASES.get(normalized, normalized)
+
+
+# ---------------------------------------------------------------------------
+# Tavily web search intent detection
+# ---------------------------------------------------------------------------
+
+WEB_SEARCH_KEYWORDS = (
+    "搜索",
+    "搜一下",
+    "查一下",
+    "查询",
+    "帮我查",
+    "帮我搜",
+    "百度一下",
+    "告诉我",
+    "回答我",
+    "天气",
+    "温度",
+    "最新",
+    "新闻",
+    "是什么",
+    "是多少",
+    "怎么样",
+    "多少钱",
+    "股票",
+    "汇率",
+    "比分",
+    "时间",
+    "日期",
+    "search ",
+    "what is",
+    "how to",
+    "latest",
+)
+
+EXPLICIT_BROWSER_KEYWORDS = (
+    "浏览器",
+    "网页",
+    "打开浏览器",
+    "在浏览器",
+    "用浏览器",
+)
+
+
+def should_web_search(request: "ChatRequest") -> bool:
+    """Return True when the user's request should be answered via Tavily web search.
+
+    The request is routed to Tavily when it contains search/query keywords
+    but does NOT explicitly ask to open a browser.
+    """
+    text = _latest_user_text(request)
+    if not text:
+        return False
+
+    lowered = text.lower()
+
+    # If user explicitly wants a browser, let computer_control handle it.
+    if any(keyword in lowered for keyword in EXPLICIT_BROWSER_KEYWORDS):
+        return False
+
+    # "How to" style questions without "help me" are informational, not actionable.
+    asks_how_to = re.search(r"(怎么|如何|怎样).*(打开|启动|点击|输入|控制)", text)
+    asks_agent_to_act = any(token in text for token in ("帮我", "请你", "替我", "给我"))
+    if asks_how_to and not asks_agent_to_act:
+        return False
+
+    return any(keyword in lowered or keyword in text for keyword in WEB_SEARCH_KEYWORDS)
+
+
+def extract_search_query_for_tavily(request: "ChatRequest") -> str:
+    """Extract the core search query string from the user's request."""
+    text = _clean_command_text(_latest_user_text(request))
+    if not text:
+        return ""
+
+    # Try explicit search pattern first: "搜索XXX", "查一下XXX"
+    match = re.search(
+        r"(?:帮我)?(?:搜索|搜一下|查一下|查询|百度一下|帮我搜|帮我查)\s*(.+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _trim_target(_strip_answer_tail(match.group(1)))
+
+    # Try "告诉我/回答我 XXX" pattern
+    match = re.search(
+        r"(?:告诉我|回答我|跟我说|给我说|说一下)\s*(.+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        query = _trim_target(match.group(1))
+        if query not in {"结果", "答案", "查询结果", "搜索结果"}:
+            return query
+
+    # Fallback: use the full text as the query (strip common prefixes)
+    cleaned = re.sub(
+        r"^(请你?|帮我|替我|给我)\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return _trim_target(cleaned) or text
+

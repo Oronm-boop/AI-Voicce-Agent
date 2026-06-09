@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
 
@@ -21,10 +22,27 @@ class OllamaClient:
     @property
     def is_openai_compatible(self) -> bool:
         path = urlparse(self.base_url).path.rstrip("/")
-        return path.endswith("/v1")
+        return (
+            self.settings.llm_provider == "openai_compatible"
+            or (
+                self.settings.llm_provider == "ollama"
+                and path.endswith("/v1")
+            )
+        )
+
+    def _ensure_supported_provider(self) -> None:
+        if self.settings.llm_provider not in {
+            "ollama",
+            "ollama_native",
+            "openai_compatible",
+        }:
+            raise OllamaClientError(
+                f"Unsupported LLM provider: {self.settings.llm_provider}"
+            )
 
     async def status(self) -> dict:
         try:
+            self._ensure_supported_provider()
             ensure_allowed_model_url(
                 self.base_url,
                 allow_remote_llm=self.settings.allow_remote_llm,
@@ -48,10 +66,7 @@ class OllamaClient:
             allow_remote_llm=self.settings.allow_remote_llm,
         )
 
-        if self.settings.llm_provider != "ollama":
-            raise OllamaClientError(
-                f"Unsupported LLM provider for MVP: {self.settings.llm_provider}"
-            )
+        self._ensure_supported_provider()
 
         try:
             if self.is_openai_compatible:
@@ -74,10 +89,7 @@ class OllamaClient:
             allow_remote_llm=self.settings.allow_remote_llm,
         )
 
-        if self.settings.llm_provider != "ollama":
-            raise OllamaClientError(
-                f"Unsupported LLM provider for MVP: {self.settings.llm_provider}"
-            )
+        self._ensure_supported_provider()
 
         model_name = request.model or self.settings.llm_model
         provider = self.settings.llm_provider
@@ -310,7 +322,20 @@ class OllamaClient:
                         yield delta
 
     def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=self.settings.request_timeout_seconds)
+        return httpx.AsyncClient(
+            timeout=self.settings.request_timeout_seconds,
+            headers=self._headers(),
+        )
+
+    def _headers(self) -> dict[str, str]:
+        api_key = self.settings.llm_api_key
+        if not api_key and self.settings.llm_api_key_env:
+            api_key = os.getenv(self.settings.llm_api_key_env, "")
+
+        if not api_key:
+            return {}
+
+        return {"Authorization": f"Bearer {api_key}"}
 
     @staticmethod
     def _to_client_error(

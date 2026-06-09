@@ -81,7 +81,7 @@
             <span class="font-body-md text-body-md text-on-surface">{{ modelStatusText }}</span>
           </div>
           <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">
-            当前仍强制只允许本机模型地址，云端大模型接口不会被保存。
+            模型配置集中保存在根目录 model_config.json。
           </p>
           <p v-if="modelStatus?.models.length" class="font-label-sm text-label-sm text-outline mt-2">
             已发现模型：{{ modelStatus.models.join('、') }}
@@ -129,10 +129,10 @@
               <div>
                 <h4 class="font-body-lg text-body-lg text-on-surface font-medium">仅本地模型</h4>
                 <p class="font-label-sm text-label-sm text-on-surface-variant mt-1">
-                  大模型推理只允许访问 127.0.0.1、localhost 或 ::1。
+                  {{ localOnlyText }}
                 </p>
               </div>
-              <ToggleSwitch :model-value="true" />
+              <ToggleSwitch :model-value="localOnlyEnabled" />
             </div>
 
             <label class="space-y-2 block">
@@ -202,6 +202,12 @@ const modelStatus = ref<ModelStatusResponse | null>(null)
 const loadedSettings = ref<AppSettingsResponse | null>(null)
 
 const canSave = computed(() => llmBaseUrl.value.length > 0 && llmModel.value.length > 0)
+const localOnlyEnabled = computed(() => !loadedSettings.value?.allow_remote_llm)
+const localOnlyText = computed(() => {
+  return localOnlyEnabled.value
+    ? '大模型推理只允许访问 127.0.0.1、localhost 或 ::1。'
+    : '已允许远程模型地址，API Key 请只放在 model_config.json 或环境变量中。'
+})
 
 const modelStatusText = computed(() => {
   if (!modelStatus.value) {

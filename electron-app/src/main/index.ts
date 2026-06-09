@@ -236,7 +236,7 @@ const ensureLocalAgentStarted = async (): Promise<void> => {
     return
   }
 
-  const executablePath = resolveLocalAgentExecutable()
+  const executablePath = is.dev ? null : resolveLocalAgentExecutable()
   const agentDataDir = resolveAgentDataDir()
   if (executablePath) {
     const executableCwd = join(executablePath, '..')

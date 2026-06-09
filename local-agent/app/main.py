@@ -18,10 +18,12 @@ app = FastAPI(
     description="Local-only MVP backend for the desktop voice task agent.",
 )
 
+# The server only binds to 127.0.0.1, so network-level security is already
+# enforced. Using allow_origins=["*"] avoids origin-mismatch issues between
+# localhost and 127.0.0.1 (browsers treat them as different origins).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["null"],
-    allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|file://.*|app://.*)$",
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],

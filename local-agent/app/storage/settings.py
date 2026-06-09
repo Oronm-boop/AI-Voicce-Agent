@@ -7,10 +7,6 @@ from app.storage.db import connect
 
 
 ALLOWED_SETTING_KEYS = {
-    "llm_base_url",
-    "llm_model",
-    "enable_thinking",
-    "default_max_tokens",
     "workspace_path",
 }
 
