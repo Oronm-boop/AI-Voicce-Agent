@@ -126,10 +126,13 @@ import {
   type ChatStreamEvent,
   type ModelStatusResponse
 } from '@api/localAgent'
+import { sendLocalLLMStream, buildPromptFromMessages } from '@api/localLLM'
+import { useLLMSettingsStore } from '@store/useLLMSettingsStore'
 
 const route = useRoute()
 const router = useRouter()
 const conversationStore = useConversationStore()
+const llmSettingsStore = useLLMSettingsStore()
 const messages = computed(() => conversationStore.activeMessages)
 const listening = ref(false)
 const transcribing = ref(false)
@@ -175,6 +178,9 @@ const voiceExecutionKeyword = '执行'
 const canSend = computed(() => inputText.value.trim().length > 0)
 
 const modelStatusText = computed(() => {
+  if (llmSettingsStore.useLocalLLM) {
+    return `本地模型：${llmSettingsStore.localLLMModel}`
+  }
   if (!status.value) {
     return '模型状态检查中...'
   }
@@ -351,6 +357,57 @@ const submitPrompt = async (prompt: string): Promise<void> => {
 
   let streamedReply = ''
 
+  // Use local LLM if configured
+  if (llmSettingsStore.useLocalLLM) {
+    try {
+      const promptStr = buildPromptFromMessages(requestMessages)
+
+      await sendLocalLLMStream(
+        llmSettingsStore.localLLMBaseUrl,
+        promptStr,
+        {
+          model: llmSettingsStore.localLLMModel,
+          temperature: llmSettingsStore.localLLMTemperature,
+          maxTokens: llmSettingsStore.localLLMMaxTokens
+        },
+        {
+          onStart: () => {
+            // streaming started
+          },
+          onDelta: (delta: string) => {
+            streamedReply += delta
+            updateMessageText(assistantMessageId, streamedReply, conversationId)
+          },
+          onDone: (reply: string) => {
+            streamedReply = reply || streamedReply
+            updateMessageText(assistantMessageId, streamedReply, conversationId)
+            speakText(streamedReply)
+          },
+          onError: (error: string) => {
+            errorMessage.value = `本地模型调用失败：${error}`
+            if (!streamedReply) {
+              updateMessageText(assistantMessageId, `本地模型调用失败：${error}`, conversationId)
+            }
+          }
+        }
+      )
+
+      if (!streamedReply) {
+        updateMessageText(assistantMessageId, '模型返回了空内容，请检查模型配置。', conversationId)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      errorMessage.value = `请求失败：${message}`
+      if (!streamedReply) {
+        updateMessageText(assistantMessageId, `本地模型调用失败：${message}`, conversationId)
+      }
+    } finally {
+      sending.value = false
+    }
+    return
+  }
+
+  // Original local-agent path
   try {
     const response = await sendChatStream(
       {

@@ -15,12 +15,12 @@ def _default_host() -> str:
 
 
 def _default_port() -> int:
-    raw = os.getenv("LOCAL_AGENT_PORT") or os.getenv("AGENT_PORT") or "8765"
+    raw = os.getenv("LOCAL_AGENT_PORT") or os.getenv("AGENT_PORT") or "8099"
     try:
         value = int(raw)
     except ValueError:
-        return 8765
-    return value if value > 0 else 8765
+        return 8099
+    return value if value > 0 else 8099
 
 
 def parse_args() -> argparse.Namespace:

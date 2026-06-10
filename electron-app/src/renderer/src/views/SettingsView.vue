@@ -89,6 +89,105 @@
         </div>
       </section>
 
+      <section class="bg-surface rounded-lg border border-surface-variant p-8 flex flex-col gap-6">
+        <header class="flex items-center gap-3 border-b border-surface-variant pb-4">
+          <MaterialIcon name="dns" :fill="1" :size="24" class="text-primary" />
+          <h3 class="font-title-sm text-title-sm text-on-surface">本地大模型</h3>
+        </header>
+
+        <div class="space-y-4">
+          <div class="flex items-center gap-4">
+            <span class="font-body-md text-body-md text-on-surface-variant">模型提供方</span>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                value="local-agent"
+                :checked="llmSettingsStore.provider === 'local-agent'"
+                class="accent-primary"
+                @change="llmSettingsStore.setProvider('local-agent')"
+              />
+              <span class="font-body-md text-body-md text-on-surface">内置后端</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                value="local-llm"
+                :checked="llmSettingsStore.provider === 'local-llm'"
+                class="accent-primary"
+                @change="llmSettingsStore.setProvider('local-llm')"
+              />
+              <span class="font-body-md text-body-md text-on-surface">本地大模型</span>
+            </label>
+          </div>
+
+          <template v-if="llmSettingsStore.provider === 'local-llm'">
+            <label class="space-y-2 block">
+              <span class="font-body-md text-body-md text-on-surface-variant block">API 地址 (Completions)</span>
+              <input
+                :value="llmSettingsStore.localLLMBaseUrl"
+                type="text"
+                class="w-full bg-surface-bright border border-surface-variant rounded-lg px-4 py-3 font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                placeholder="http://192.168.0.105:8081/v1/"
+                @input="(e) => llmSettingsStore.setLocalLLMBaseUrl((e.target as HTMLInputElement).value)"
+              />
+              <p class="font-label-sm text-label-sm text-outline mt-1">
+                需要以 /v1/ 结尾，如 http://192.168.0.105:8081/v1/
+              </p>
+            </label>
+
+            <label class="space-y-2 block">
+              <span class="font-body-md text-body-md text-on-surface-variant block">模型名称</span>
+              <input
+                :value="llmSettingsStore.localLLMModel"
+                type="text"
+                class="w-full bg-surface-bright border border-surface-variant rounded-lg px-4 py-3 font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                placeholder="Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf"
+                @input="(e) => llmSettingsStore.setLocalLLMModel((e.target as HTMLInputElement).value)"
+              />
+            </label>
+
+            <div class="grid grid-cols-2 gap-4">
+              <label class="space-y-2 block">
+                <span class="font-body-md text-body-md text-on-surface-variant block">Temperature</span>
+                <input
+                  :value="llmSettingsStore.localLLMTemperature"
+                  type="number"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  class="w-full bg-surface-bright border border-surface-variant rounded-lg px-4 py-3 font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  @input="(e) => llmSettingsStore.setLocalLLMTemperature(Number((e.target as HTMLInputElement).value))"
+                />
+              </label>
+              <label class="space-y-2 block">
+                <span class="font-body-md text-body-md text-on-surface-variant block">Max Tokens</span>
+                <input
+                  :value="llmSettingsStore.localLLMMaxTokens"
+                  type="number"
+                  min="64"
+                  max="32768"
+                  step="64"
+                  class="w-full bg-surface-bright border border-surface-variant rounded-lg px-4 py-3 font-body-md text-body-md text-on-surface focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  @input="(e) => llmSettingsStore.setLocalLLMMaxTokens(Number((e.target as HTMLInputElement).value))"
+                />
+              </label>
+            </div>
+
+            <div class="rounded-lg border border-outline-variant bg-surface-container-lowest p-4">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-primary"></span>
+                <span class="font-body-md text-body-md text-on-surface">
+                  已配置：{{ llmSettingsStore.localLLMModel }} @ {{ llmSettingsStore.localLLMBaseUrl }}
+                </span>
+              </div>
+              <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">
+                通过主进程代理调用，无跨域限制。API 需兼容 OpenAI Completions 格式 (/v1/completions)。
+              </p>
+            </div>
+          </template>
+        </div>
+      </section>
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-gutter">
         <section class="bg-surface rounded-lg border border-surface-variant p-8 flex flex-col gap-8">
           <header class="flex items-center gap-3 border-b border-surface-variant pb-4">
@@ -183,6 +282,7 @@ import {
   type AppSettingsResponse,
   type ModelStatusResponse
 } from '@api/localAgent'
+import { useLLMSettingsStore } from '@store/useLLMSettingsStore'
 
 const voiceOptions = ['沉稳男声', '亲切女声', '中性合成'] as const
 type VoiceOption = (typeof voiceOptions)[number]
@@ -200,6 +300,7 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const modelStatus = ref<ModelStatusResponse | null>(null)
 const loadedSettings = ref<AppSettingsResponse | null>(null)
+const llmSettingsStore = useLLMSettingsStore()
 
 const canSave = computed(() => llmBaseUrl.value.length > 0 && llmModel.value.length > 0)
 const localOnlyEnabled = computed(() => !loadedSettings.value?.allow_remote_llm)

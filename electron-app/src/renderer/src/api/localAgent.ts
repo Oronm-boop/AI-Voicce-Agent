@@ -1,4 +1,4 @@
-const DEFAULT_AGENT_BASE_URL = 'http://127.0.0.1:8765'
+const DEFAULT_AGENT_BASE_URL = 'http://127.0.0.1:8099'
 
 const agentBaseUrl = (
   import.meta.env.VITE_AGENT_BASE_URL || DEFAULT_AGENT_BASE_URL

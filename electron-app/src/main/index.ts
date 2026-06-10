@@ -1,13 +1,13 @@
 import { app, shell, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
 import { join } from 'path'
 import { existsSync, statSync } from 'fs'
-import { request as httpRequest } from 'http'
+import { request as httpRequest, type IncomingMessage } from 'http'
 import { spawn, type ChildProcess } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 
 const DEFAULT_AGENT_HOST = '127.0.0.1'
-const DEFAULT_AGENT_PORT = 8765
+const DEFAULT_AGENT_PORT = 8099
 const DEFAULT_AGENT_ENTRY = 'app.main:app'
 const DEFAULT_AGENT_EXECUTABLE_NAME =
   process.platform === 'win32' ? 'local-agent-runtime.exe' : 'local-agent-runtime'
@@ -52,6 +52,248 @@ const registerWorkspaceIpc = (): void => {
     if (error) {
       throw new Error(error)
     }
+  })
+}
+
+interface LocalLLMCompleteParams {
+  baseUrl: string
+  prompt: string
+  model?: string
+  temperature?: number
+  maxTokens?: number
+}
+
+interface LocalLLMCompleteResult {
+  text: string
+  model: string
+  usage: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
+}
+
+const registerLocalLLMIpc = (): void => {
+  ipcMain.handle('local-llm:complete', async (_event, params: LocalLLMCompleteParams): Promise<LocalLLMCompleteResult> => {
+    const { baseUrl, prompt, model, temperature, maxTokens } = params
+
+    return new Promise((resolve, reject) => {
+      const url = new URL(baseUrl.endsWith('/') ? `${baseUrl}completions` : `${baseUrl}/completions`)
+      const body = JSON.stringify({
+        prompt,
+        model: model || 'default',
+        temperature: temperature ?? 0.8,
+        max_tokens: maxTokens ?? 2048
+      })
+
+      const req = httpRequest(
+        {
+          host: url.hostname,
+          port: url.port || 80,
+          path: url.pathname + url.search,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body)
+          },
+          timeout: 120000
+        },
+        (res: IncomingMessage) => {
+          let data = ''
+          res.on('data', (chunk: Buffer) => {
+            data += chunk.toString()
+          })
+          res.on('end', () => {
+            try {
+              const json = JSON.parse(data) as {
+                choices?: Array<{ text: string }>
+                model?: string
+                usage?: {
+                  prompt_tokens: number
+                  completion_tokens: number
+                  total_tokens: number
+                }
+              }
+              resolve({
+                text: json.choices?.[0]?.text || '',
+                model: json.model || model || 'unknown',
+                usage: {
+                  promptTokens: json.usage?.prompt_tokens || 0,
+                  completionTokens: json.usage?.completion_tokens || 0,
+                  totalTokens: json.usage?.total_tokens || 0
+                }
+              })
+            } catch (err) {
+              reject(new Error(`Failed to parse LLM response: ${(err as Error).message}`))
+            }
+          })
+          res.on('error', reject)
+        }
+      )
+
+      req.on('error', reject)
+      req.on('timeout', () => {
+        req.destroy()
+        reject(new Error('Local LLM request timed out'))
+      })
+
+      req.write(body)
+      req.end()
+    })
+  })
+
+  ipcMain.handle('local-llm:complete-stream', async (event, params: LocalLLMCompleteParams): Promise<LocalLLMCompleteResult> => {
+    const { baseUrl, prompt, model, temperature, maxTokens } = params
+    const sender = event.sender
+
+    return new Promise((resolve, reject) => {
+      const url = new URL(baseUrl.endsWith('/') ? `${baseUrl}completions` : `${baseUrl}/completions`)
+      const body = JSON.stringify({
+        prompt,
+        model: model || 'default',
+        temperature: temperature ?? 0.8,
+        max_tokens: maxTokens ?? 2048,
+        stream: true
+      })
+
+      const req = httpRequest(
+        {
+          host: url.hostname,
+          port: url.port || 80,
+          path: url.pathname + url.search,
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body)
+          },
+          timeout: 120000
+        },
+        (res: IncomingMessage) => {
+          let buffer = ''
+          let fullText = ''
+          let modelName = model || 'unknown'
+          const requestId = `local-${Date.now()}`
+
+          sender.send('local-llm:stream-event', {
+            type: 'start',
+            request_id: requestId,
+            model: modelName,
+            provider: 'local-llm'
+          })
+
+          res.on('data', (chunk: Buffer) => {
+            buffer += chunk.toString()
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              const trimmed = line.trim()
+              if (!trimmed || !trimmed.startsWith('data:')) continue
+
+              const data = trimmed.slice(5).trim()
+              if (data === '[DONE]') continue
+
+              try {
+                const json = JSON.parse(data) as {
+                  choices?: Array<{ text: string }>
+                  model?: string
+                  usage?: Record<string, number>
+                }
+                const delta = json.choices?.[0]?.text || ''
+                if (delta) {
+                  fullText += delta
+                  sender.send('local-llm:stream-event', {
+                    type: 'delta',
+                    request_id: requestId,
+                    delta,
+                    model: json.model || modelName,
+                    provider: 'local-llm'
+                  })
+                }
+              } catch {
+                // skip unparseable lines
+              }
+            }
+          })
+
+          res.on('end', () => {
+            // flush remaining buffer
+            if (buffer.trim()) {
+              const trimmed = buffer.trim()
+              if (trimmed.startsWith('data:')) {
+                const data = trimmed.slice(5).trim()
+                if (data !== '[DONE]') {
+                  try {
+                    const json = JSON.parse(data) as {
+                      choices?: Array<{ text: string }>
+                      model?: string
+                    }
+                    const delta = json.choices?.[0]?.text || ''
+                    if (delta) {
+                      fullText += delta
+                      sender.send('local-llm:stream-event', {
+                        type: 'delta',
+                        request_id: requestId,
+                        delta,
+                        model: json.model || modelName,
+                        provider: 'local-llm'
+                      })
+                    }
+                  } catch {
+                    // skip
+                  }
+                }
+              }
+            }
+
+            sender.send('local-llm:stream-event', {
+              type: 'done',
+              request_id: requestId,
+              reply: fullText,
+              model: modelName,
+              provider: 'local-llm'
+            })
+
+            resolve({
+              text: fullText,
+              model: modelName,
+              usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+            })
+          })
+
+          res.on('error', (err) => {
+            sender.send('local-llm:stream-event', {
+              type: 'error',
+              request_id: requestId,
+              error: err.message
+            })
+            reject(err)
+          })
+        }
+      )
+
+      req.on('error', (err) => {
+        sender.send('local-llm:stream-event', {
+          type: 'error',
+          request_id: `local-${Date.now()}`,
+          error: err.message
+        })
+        reject(err)
+      })
+      req.on('timeout', () => {
+        req.destroy()
+        const timeoutError = new Error('Local LLM stream request timed out')
+        sender.send('local-llm:stream-event', {
+          type: 'error',
+          request_id: `local-${Date.now()}`,
+          error: timeoutError.message
+        })
+        reject(timeoutError)
+      })
+
+      req.write(body)
+      req.end()
+    })
   })
 }
 
@@ -283,6 +525,30 @@ const ensureLocalAgentStarted = async (): Promise<void> => {
   }
 }
 
+const loadURLWithRetry = async (
+  window: BrowserWindow,
+  url: string,
+  maxRetries = 10,
+  retryDelayMs = 500
+): Promise<void> => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await window.loadURL(url)
+      return
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (attempt < maxRetries) {
+        console.log(
+          `[dev] Waiting for dev server (attempt ${attempt}/${maxRetries}): ${message}`
+        )
+        await delay(retryDelayMs)
+      } else {
+        throw err
+      }
+    }
+  }
+}
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -309,7 +575,13 @@ function createWindow(): void {
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    const devUrl = process.env['ELECTRON_RENDERER_URL']
+    console.log(`[dev] Loading dev server at ${devUrl}`)
+    loadURLWithRetry(mainWindow, devUrl).catch((err) => {
+      console.error(`[dev] Failed to load ${devUrl} after retries:`, err)
+      // Fallback: try loading the built file
+      mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    })
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
@@ -322,6 +594,7 @@ app.whenReady().then(async () => {
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
   registerWorkspaceIpc()
+  registerLocalLLMIpc()
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Local Agent Runtime"
     agent_host: str = "127.0.0.1"
-    agent_port: int = 8765
+    agent_port: int = 8099
     allow_remote_llm: bool = False
     llm_provider: str = "ollama"
     llm_base_url: str = "http://127.0.0.1:11434"
