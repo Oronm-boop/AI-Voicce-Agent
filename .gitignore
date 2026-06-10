@@ -10,7 +10,6 @@ release/
 .env
 .env.*
 !.env.example
-model_config.json
 
 # Logs
 logs/
