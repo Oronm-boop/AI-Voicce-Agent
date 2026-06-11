@@ -1,4 +1,6 @@
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +12,43 @@ from app.api.settings import router as settings_router
 from app.api.tasks import router as tasks_router
 from app.api.voice import get_asr_engine, router as voice_router
 from app.config import get_settings
+
+
+def _setup_file_logging() -> None:
+    """配置日志同时输出到控制台和文件，便于调试排查错误。"""
+    settings = get_settings()
+    data_dir = Path(settings.data_dir)
+    if not data_dir.is_absolute():
+        data_dir = Path.cwd() / data_dir
+    log_dir = data_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "local-agent.log"
+
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    # 避免重复添加 handler
+    if not any(isinstance(h, RotatingFileHandler) for h in root_logger.handlers):
+        root_logger.addHandler(file_handler)
+    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in root_logger.handlers):
+        root_logger.addHandler(console_handler)
+
+
+_setup_file_logging()
 
 logger = logging.getLogger(__name__)
 

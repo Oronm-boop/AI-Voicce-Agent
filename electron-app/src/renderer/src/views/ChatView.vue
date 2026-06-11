@@ -74,17 +74,22 @@
         <form class="w-full flex items-end gap-3" @submit.prevent="handleSubmit">
           <button
             type="button"
-            class="w-12 h-12 rounded-full bg-surface-container-lowest border border-outline-variant flex items-center justify-center shadow-sm hover:bg-surface-container-low transition-colors group flex-shrink-0"
-            :class="{ '!bg-primary !border-primary': listening }"
+            class="w-12 h-12 rounded-full bg-surface-container-lowest border border-outline-variant flex items-center justify-center shadow-sm transition-colors group flex-shrink-0"
+            :class="{
+              '!bg-primary !border-primary': listening && !micError,
+              '!bg-error-container !border-error': micError,
+              'hover:bg-surface-container-low cursor-pointer': micError,
+              'cursor-default': listening && !micError
+            }"
             :title="voiceButtonTitle"
-            @click="toggleListening"
+            @click="retryListening"
           >
             <MaterialIcon
               :name="voiceButtonIcon"
-              :fill="listening ? 1 : 0"
+              :fill="listening && !micError ? 1 : 0"
               :size="24"
               class="group-hover:scale-110 transition-transform"
-              :class="listening ? 'text-on-primary' : 'text-primary'"
+              :class="micError ? 'text-error' : listening ? 'text-on-primary' : 'text-primary'"
             />
           </button>
 
@@ -145,7 +150,8 @@ const messageListRef = ref<HTMLElement | null>(null)
 const status = ref<ModelStatusResponse | null>(null)
 const hearingSpeech = ref(false)
 const queuedVoicePromptCount = ref(0)
-const pendingVoicePromptText = ref('')
+const awake = ref(false)
+const micError = ref(false)
 
 let activeMicStream: MediaStream | null = null
 let audioContext: AudioContext | null = null
@@ -164,7 +170,6 @@ let preSpeechSampleCount = 0
 let activeTranscriptionCount = 0
 let transcriptionChain: Promise<void> = Promise.resolve()
 let voicePromptQueue: string[] = []
-let pendingVoicePromptParts: string[] = []
 let drainingVoicePromptQueue = false
 
 const targetRecordingSampleRate = 16000
@@ -173,7 +178,8 @@ const silenceToSubmitMs = 400
 const minSpeechMs = 300
 const maxSpeechSegmentMs = 12000
 const preSpeechMs = 200
-const voiceExecutionKeyword = '执行'
+// 唤醒词：常见的语音识别近音变体一并匹配，提升唤醒成功率
+const wakeWordPattern = /(小悠|小优|小友|小柚|晓悠|晓优|筱悠|肖悠)/g
 
 const canSend = computed(() => inputText.value.trim().length > 0)
 
@@ -194,33 +200,36 @@ const modelStatusText = computed(() => {
 })
 
 const inputStatusText = computed(() => {
+  if (micError.value) {
+    return '麦克风未开启，点击麦克风重试'
+  }
   if (sending.value) {
     return '正在执行命令，语音监听已暂停'
   }
+  if (awake.value) {
+    return '已唤醒，请说出要执行的命令'
+  }
   if (hearingSpeech.value) {
-    return '听到语音，正在识别并暂存'
+    return '正在聆听，等待唤醒词"小悠"'
   }
   if (transcribing.value) {
     return '正在识别语音片段...'
   }
-  if (listening.value && sending.value) {
-    return '正在执行语音命令...'
-  }
   if (queuedVoicePromptCount.value > 0) {
     return `还有 ${queuedVoicePromptCount.value} 条语音命令排队`
   }
-  if (pendingVoicePromptText.value) {
-    return '已暂存语音命令，说"执行"后开始执行'
-  }
   if (listening.value) {
-    return '实时语音已开启，说出命令后用"执行"确认'
+    return '麦克风已开启，说"小悠"加上命令即可执行'
   }
-  return '点击麦克风开始对话'
+  return '麦克风准备中...'
 })
 
 const voiceButtonIcon = computed(() => {
-  if (transcribing.value && !listening.value) {
-    return 'hourglass_top'
+  if (micError.value) {
+    return 'mic_off'
+  }
+  if (awake.value) {
+    return 'graphic_eq'
   }
   if (hearingSpeech.value) {
     return 'graphic_eq'
@@ -228,9 +237,12 @@ const voiceButtonIcon = computed(() => {
   return listening.value ? 'mic' : 'mic_none'
 })
 
-const voiceButtonTitle = computed(() =>
-  listening.value ? '停止实时语音' : '开启实时语音'
-)
+const voiceButtonTitle = computed(() => {
+  if (micError.value) {
+    return '麦克风未开启，点击重试'
+  }
+  return awake.value ? '已唤醒，请说出命令' : '麦克风常开，说"小悠"唤醒'
+})
 
 const scrollToBottom = async (): Promise<void> => {
   await nextTick()
@@ -601,37 +613,30 @@ const setTranscribingCount = (delta: number): void => {
   transcribing.value = activeTranscriptionCount > 0
 }
 
-const normalizeVoiceKeywordCandidate = (text: string): string =>
-  text.replace(/[\s,.!?;:'"，。！？；：、…“”‘’（）()【】《》〈〉\[\]]/g, '').trim()
+// 去掉命令前后的标点和空白（如“小悠，打开浏览器”中的逗号）
+const trimCommandText = (text: string): string =>
+  text
+    .replace(/^[\s,.!?;:'"，。！？；：、…“”‘’（）()【】《》〈〉\[\]]+/, '')
+    .replace(/[\s]+$/, '')
+    .trim()
 
-const isVoiceExecutionTrigger = (text: string): boolean =>
-  normalizeVoiceKeywordCandidate(text) === voiceExecutionKeyword
-
-const clearPendingVoicePrompt = (): void => {
-  pendingVoicePromptParts = []
-  pendingVoicePromptText.value = ''
-}
-
-const appendPendingVoicePrompt = (prompt: string): void => {
-  const normalizedPrompt = prompt.trim()
-  if (!normalizedPrompt) {
-    return
+// 检测唤醒词，并返回唤醒词之后的命令文本（取最后一次出现的唤醒词之后的内容）
+const extractWakeWord = (text: string): { matched: boolean; command: string } => {
+  wakeWordPattern.lastIndex = 0
+  let lastMatchEnd = -1
+  let match: RegExpExecArray | null
+  while ((match = wakeWordPattern.exec(text)) !== null) {
+    lastMatchEnd = match.index + match[0].length
+    if (match.index === wakeWordPattern.lastIndex) {
+      wakeWordPattern.lastIndex += 1
+    }
   }
 
-  pendingVoicePromptParts.push(normalizedPrompt)
-  pendingVoicePromptText.value = pendingVoicePromptParts.join('\n')
-}
-
-const executePendingVoicePrompt = (): boolean => {
-  const prompt = pendingVoicePromptText.value.trim()
-  if (!prompt) {
-    errorMessage.value = '已收到“执行”，但还没有识别到待执行内容。'
-    return false
+  if (lastMatchEnd < 0) {
+    return { matched: false, command: '' }
   }
 
-  clearPendingVoicePrompt()
-  enqueueVoicePrompt(prompt)
-  return true
+  return { matched: true, command: trimCommandText(text.slice(lastMatchEnd)) }
 }
 
 const handleVoiceTranscript = (transcript: string): boolean => {
@@ -640,11 +645,34 @@ const handleVoiceTranscript = (transcript: string): boolean => {
     return false
   }
 
-  if (isVoiceExecutionTrigger(normalizedTranscript)) {
-    return executePendingVoicePrompt()
+  const { matched, command } = extractWakeWord(normalizedTranscript)
+
+  // 已唤醒：本句即为命令（若本句又包含唤醒词，则取唤醒词之后的内容）
+  if (awake.value) {
+    const prompt = matched ? command : trimCommandText(normalizedTranscript)
+    if (prompt) {
+      awake.value = false
+      enqueueVoicePrompt(prompt)
+      return true
+    }
+    // 仍然只听到唤醒词，没有命令内容，保持唤醒状态等待下一句
+    return true
   }
 
-  appendPendingVoicePrompt(normalizedTranscript)
+  // 未唤醒且没有唤醒词：直接忽略，不识别、不进入对话上下文
+  if (!matched) {
+    return false
+  }
+
+  // 听到唤醒词
+  if (command) {
+    // “小悠 + 命令”同一句话，直接执行
+    enqueueVoicePrompt(command)
+    return true
+  }
+
+  // 只说了“小悠”，进入唤醒状态，等待下一句命令
+  awake.value = true
   return true
 }
 
@@ -852,12 +880,18 @@ const startListening = async (): Promise<void> => {
     window.AudioContext ||
     (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
 
+  if (listening.value) {
+    return
+  }
+
   if (!navigator.mediaDevices?.getUserMedia || !AudioContextCtor) {
+    micError.value = true
     errorMessage.value = '当前环境不支持麦克风录音。'
     return
   }
 
   try {
+    awake.value = false
     resetSpeechBuffers()
     activeMicStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -876,11 +910,13 @@ const startListening = async (): Promise<void> => {
     processorNode.connect(audioContext.destination)
     await audioContext.resume()
     listening.value = true
+    micError.value = false
     errorMessage.value = ''
   } catch (error) {
     stopAudioGraph()
     stopMicTracks()
     resetSpeechBuffers()
+    micError.value = true
     const message = error instanceof Error ? error.message : String(error)
     errorMessage.value = `麦克风启动失败：${message}`
   }
@@ -896,11 +932,12 @@ const stopContinuousListening = (): void => {
   stopMicTracks()
   resetPreSpeechBuffer()
   hearingSpeech.value = false
+  awake.value = false
 }
 
-const toggleListening = async (): Promise<void> => {
+// 麦克风保持常开；按钮仅在启动失败时用于重试
+const retryListening = async (): Promise<void> => {
   if (listening.value) {
-    stopContinuousListening()
     return
   }
   await startListening()
@@ -917,6 +954,8 @@ onMounted(async () => {
   await syncConversationFromRoute()
   await checkModelStatus()
   await scrollToBottom()
+  // 麦克风常开：进入页面即自动开启实时语音监听
+  await startListening()
 })
 
 onBeforeUnmount(() => {
