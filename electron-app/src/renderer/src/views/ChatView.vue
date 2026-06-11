@@ -360,7 +360,7 @@ const submitPrompt = async (prompt: string): Promise<void> => {
   // Use local LLM if configured
   if (llmSettingsStore.useLocalLLM) {
     try {
-      const promptStr = buildPromptFromMessages(requestMessages)
+      const promptStr = buildPromptFromMessages(requestMessages || [])
 
       await sendLocalLLMStream(
         llmSettingsStore.localLLMBaseUrl,

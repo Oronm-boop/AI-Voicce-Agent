@@ -167,6 +167,7 @@ class AppSettingsResponse(BaseModel):
     llm_base_url: str
     llm_model: str
     allow_remote_llm: bool
+    has_api_key: bool = False
     enable_thinking: bool
     default_max_tokens: int
     workspace_path: str

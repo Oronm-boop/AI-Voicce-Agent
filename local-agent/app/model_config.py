@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,11 @@ def model_config_path() -> Path:
 
     cwd = Path.cwd().resolve()
     source_root = Path(__file__).resolve().parents[2]
+    # Also check next to the executable (PyInstaller one-dir bundle)
+    exe_dir = Path(sys.executable).parent.resolve() if hasattr(sys, "executable") else None
     candidates = [cwd, *cwd.parents, source_root]
+    if exe_dir is not None and exe_dir not in candidates:
+        candidates.append(exe_dir)
 
     for base in candidates:
         path = base / MODEL_CONFIG_FILENAME

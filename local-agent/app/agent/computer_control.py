@@ -122,6 +122,8 @@ WEBSITE_ALIASES = {
     "京东": "https://www.jd.com",
     "邮箱": "https://mail.qq.com",
     "outlook": "https://outlook.live.com/mail",
+    "爱奇艺": "https://www.iqiyi.com",
+    "iqiyi": "https://www.iqiyi.com",
 }
 
 

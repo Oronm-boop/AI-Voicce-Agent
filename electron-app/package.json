@@ -1,7 +1,7 @@
 {
-  "name": "electron-app",
+  "name": "ai-voice",
   "version": "1.0.0",
-  "description": "An Electron application with Vue and TypeScript",
+  "description": "AI Voice - Realtime Voice & Task AI Agent",
   "main": "./out/main/index.js",
   "author": "example.com",
   "homepage": "https://www.electronjs.org",

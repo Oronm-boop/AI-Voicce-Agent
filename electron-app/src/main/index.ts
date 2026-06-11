@@ -13,8 +13,14 @@ const DEFAULT_AGENT_EXECUTABLE_NAME =
   process.platform === 'win32' ? 'local-agent-runtime.exe' : 'local-agent-runtime'
 const DEFAULT_AGENT_READY_TIMEOUT_MS = 15000
 
+const DEFAULT_MCP_HOST = '127.0.0.1'
+const DEFAULT_MCP_PORT = 8000
+const DEFAULT_MCP_EXECUTABLE_NAME =
+  process.platform === 'win32' ? 'mcp-server.exe' : 'mcp-server'
+
 let localAgentProcess: ChildProcess | null = null
 let localAgentOwnedByApp = false
+let mcpProcess: ChildProcess | null = null
 
 const registerWorkspaceIpc = (): void => {
   ipcMain.handle('workspace:select', async (event): Promise<string | null> => {
@@ -421,6 +427,88 @@ const stopLocalAgent = (): void => {
   localAgentOwnedByApp = false
 }
 
+// ── MCP Server ──────────────────────────────────────────────────────────────
+
+const resolveMcpExecutable = (): string | null => {
+  const candidates = [
+    join(process.resourcesPath, 'mcp-server', DEFAULT_MCP_EXECUTABLE_NAME),
+    join(
+      process.resourcesPath,
+      'app.asar.unpacked',
+      'mcp-server',
+      DEFAULT_MCP_EXECUTABLE_NAME
+    ),
+    join(app.getAppPath(), '..', 'mcp-server', DEFAULT_MCP_EXECUTABLE_NAME)
+  ]
+  for (const p of candidates) {
+    if (existsSync(p)) {
+      return p
+    }
+  }
+  return null
+}
+
+const stopMcpServer = (): void => {
+  if (mcpProcess && !mcpProcess.killed) {
+    mcpProcess.kill()
+    mcpProcess = null
+  }
+}
+
+const startMcpServer = async (): Promise<void> => {
+  // In dev mode, the MCP server is started by scripts/dev.mjs
+  if (is.dev) {
+    return
+  }
+
+  const executablePath = resolveMcpExecutable()
+  if (!executablePath) {
+    console.warn('[mcp] Bundled mcp-server executable not found — skipping MCP startup.')
+    console.warn('[mcp] Computer-control features will be unavailable.')
+    return
+  }
+
+  const args = [
+    'serve',
+    '--transport',
+    'streamable-http',
+    '--host',
+    DEFAULT_MCP_HOST,
+    '--port',
+    String(DEFAULT_MCP_PORT)
+  ]
+
+  console.log(`[mcp] Starting MCP server: ${executablePath} ${args.join(' ')}`)
+  const child = spawn(executablePath, args, {
+    cwd: join(executablePath, '..'),
+    windowsHide: true,
+    env: { ...process.env }
+  })
+
+  mcpProcess = child
+
+  child.stdout?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString().trim()
+    if (text) console.log(`[mcp] ${text}`)
+  })
+
+  child.stderr?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString().trim()
+    if (text) console.error(`[mcp] ${text}`)
+  })
+
+  child.on('error', (error) => {
+    console.error(`[mcp] Failed to start: ${error.message}`)
+  })
+
+  child.on('exit', (code, signal) => {
+    console.warn(`[mcp] Exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`)
+    if (mcpProcess?.pid === child.pid) {
+      mcpProcess = null
+    }
+  })
+}
+
 const attachLocalAgentProcessListeners = (child: ChildProcess): void => {
   localAgentProcess = child
   localAgentOwnedByApp = true
@@ -591,19 +679,16 @@ function createWindow(): void {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
-  // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.aivoice.app')
   registerWorkspaceIpc()
   registerLocalLLMIpc()
 
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  await ensureLocalAgentStarted()
+  // Start backend services in parallel
+  await Promise.all([ensureLocalAgentStarted(), startMcpServer()])
   createWindow()
 
   app.on('activate', function () {
@@ -624,6 +709,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   stopLocalAgent()
+  stopMcpServer()
 })
 
 // In this file you can include the rest of your app"s specific main process

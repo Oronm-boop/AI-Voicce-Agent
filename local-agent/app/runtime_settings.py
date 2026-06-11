@@ -24,6 +24,7 @@ def get_app_settings_response() -> AppSettingsResponse:
         llm_base_url=settings.llm_base_url,
         llm_model=settings.llm_model,
         allow_remote_llm=settings.allow_remote_llm,
+        has_api_key=bool(settings.llm_api_key),
         enable_thinking=settings.enable_thinking,
         default_max_tokens=settings.default_max_tokens,
         workspace_path=settings.workspace_path,

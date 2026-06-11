@@ -1,7 +1,7 @@
 from urllib.parse import urlparse
 
 
-LOCAL_MODEL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+LOCAL_MODEL_HOSTS = {"127.0.0.1", "localhost", "::1", "192.168.0.105"}
 
 CLOUD_LLM_HOSTS = {
     "api.openai.com",

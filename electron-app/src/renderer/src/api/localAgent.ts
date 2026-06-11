@@ -29,6 +29,7 @@ export interface AppSettingsResponse {
   llm_base_url: string
   llm_model: string
   allow_remote_llm: boolean
+  has_api_key: boolean
   enable_thinking: boolean
   default_max_tokens: number
   workspace_path: string

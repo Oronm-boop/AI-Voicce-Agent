@@ -1,11 +1,11 @@
 {
-  "llm_provider": "ollama",
+  "llm_provider": "openai_compatible",
   "llm_base_url": "http://192.168.0.105:8081/v1",
-  "llm_model": "Qwen3.6-35B-A3B-UD-Q8_K_XL.gguf",
+  "llm_model": "Qwen3.5-35B-A3B-Q8_0.gguf",
   "allow_remote_llm": true,
   "llm_api_key": "",
   "llm_api_key_env": "",
   "enable_thinking": false,
-  "default_max_tokens": 2048,
+  "default_max_tokens": 8192,
   "request_timeout_seconds": 120.0
 }

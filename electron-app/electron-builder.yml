@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: electron-app
+appId: com.aivoice.app
+productName: AI-Voice
 directories:
   buildResources: build
 files:
@@ -16,8 +16,12 @@ extraResources:
     to: local-agent
     filter:
       - '**/*'
+  - from: ../local-agent/dist/mcp-server
+    to: mcp-server
+    filter:
+      - '**/*'
 win:
-  executableName: electron-app
+  executableName: AI-Voice
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
