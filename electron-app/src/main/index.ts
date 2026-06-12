@@ -685,8 +685,18 @@ app.whenReady().then(async () => {
   // 授权校验闸门：未授权则不启动后端与窗口，直接提示并退出
   const licenseResult = await verifyLicense()
   if (!licenseResult.ok) {
-    console.error(`[license] 授权校验失败: ${licenseResult.reason ?? '未知原因'}`)
-    dialog.showErrorBox('授权校验失败', '未检测到有效授权，应用将退出。')
+    const reason = licenseResult.reason ?? '未知原因'
+    const logHint = licenseResult.logFile
+      ? `\n\n详细日志请查看:\n${licenseResult.logFile}`
+      : ''
+    console.error(`[license] 授权校验失败: ${reason}`)
+    if (licenseResult.logFile) {
+      console.error(`[license] 详细日志: ${licenseResult.logFile}`)
+    }
+    dialog.showErrorBox(
+      '授权校验失败',
+      `未检测到有效授权，应用将退出。\n\n原因: ${reason}${logHint}`
+    )
     app.quit()
     return
   }
