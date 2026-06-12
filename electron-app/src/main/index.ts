@@ -5,6 +5,7 @@ import { request as httpRequest, type IncomingMessage } from 'http'
 import { spawn, type ChildProcess } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { verifyLicense } from './license'
 
 const DEFAULT_AGENT_HOST = '127.0.0.1'
 const DEFAULT_AGENT_PORT = 8099
@@ -680,6 +681,16 @@ function createWindow(): void {
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.aivoice.app')
+
+  // 授权校验闸门：未授权则不启动后端与窗口，直接提示并退出
+  const licenseResult = await verifyLicense()
+  if (!licenseResult.ok) {
+    console.error(`[license] 授权校验失败: ${licenseResult.reason ?? '未知原因'}`)
+    dialog.showErrorBox('授权校验失败', '未检测到有效授权，应用将退出。')
+    app.quit()
+    return
+  }
+
   registerWorkspaceIpc()
   registerLocalLLMIpc()
 

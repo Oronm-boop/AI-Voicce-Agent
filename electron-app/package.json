@@ -25,6 +25,7 @@
     "@electron-toolkit/utils": "^2.0.0",
     "axios": "^1.6.2",
     "element-plus": "^2.4.3",
+    "koffi": "^3.0.2",
     "pinia": "^2.1.7",
     "pinia-plugin-persist": "^1.0.0",
     "vue-router": "^4.2.5"

@@ -20,6 +20,10 @@ extraResources:
     to: mcp-server
     filter:
       - '**/*'
+  - from: ../License/dll
+    to: license
+    filter:
+      - '*.dll'
 win:
   executableName: AI-Voice
 nsis:
