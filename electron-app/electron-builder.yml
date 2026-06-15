@@ -24,7 +24,7 @@ extraResources:
   - from: License
     to: license
     filter:
-      - '*.dll'
+      - '**/*'
 win:
   executableName: AI-Voice
 nsis:

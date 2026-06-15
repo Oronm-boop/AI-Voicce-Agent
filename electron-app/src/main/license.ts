@@ -9,6 +9,13 @@ const RESULT_PREFIX = '__LICENSE_RESULT__'
 const DEFAULT_LICENSE_IP = '127.0.0.1'
 const DEFAULT_LICENSE_PORT = 7681
 const DEFAULT_LICENSE_TIMEOUT_MS = 15000
+const LICENSE_RUNTIME_SIDECAR_FILES = [
+  'libcrypto-3-x64.dll',
+  'libssl-3-x64.dll',
+  'uv.dll',
+  'websockets.dll',
+  'zlib1.dll'
+]
 
 export interface LicenseResult {
   ok: boolean
@@ -95,10 +102,36 @@ const resolveDllPath = (logFile: string | undefined): string | null => {
       writeLog(logFile, `selected dll path="${dllPath}" stat failed: ${message}`)
     }
 
+    logRuntimeSidecarFiles(dllPath, logFile)
     return dllPath
   }
 
   return null
+}
+
+const logRuntimeSidecarFiles = (dllPath: string, logFile: string | undefined): void => {
+  const dllDir = dirname(dllPath)
+
+  for (const fileName of LICENSE_RUNTIME_SIDECAR_FILES) {
+    const sidecarPath = join(dllDir, fileName)
+    const exists = existsSync(sidecarPath)
+
+    if (!exists) {
+      writeLog(logFile, `runtime sidecar path="${sidecarPath}" exists=false`)
+      continue
+    }
+
+    try {
+      const stats = statSync(sidecarPath)
+      writeLog(
+        logFile,
+        `runtime sidecar path="${sidecarPath}" exists=true size=${stats.size} modified=${stats.mtime.toISOString()}`
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      writeLog(logFile, `runtime sidecar path="${sidecarPath}" stat failed: ${message}`)
+    }
+  }
 }
 
 const prependDllDirToPath = (dllPath: string, logFile: string | undefined): void => {
