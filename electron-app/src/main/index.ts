@@ -697,7 +697,7 @@ app.whenReady().then(async () => {
       '授权校验失败',
       `未检测到有效授权，应用将退出。\n\n原因: ${reason}${logHint}`
     )
-    app.quit()
+    app.exit(1)
     return
   }
 

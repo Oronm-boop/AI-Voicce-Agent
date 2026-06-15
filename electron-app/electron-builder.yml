@@ -20,7 +20,7 @@ extraResources:
     to: mcp-server
     filter:
       - '**/*'
-  - from: ../License/dll
+  - from: ../License
     to: license
     filter:
       - '*.dll'

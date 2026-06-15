@@ -1,9 +1,9 @@
 {
   "llm_provider": "openai_compatible",
-  "llm_base_url": "http://192.168.0.105:8081/v1",
-  "llm_model": "Qwen3.5-35B-A3B-Q8_0.gguf",
+  "llm_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "llm_model": "qwen-plus",
   "allow_remote_llm": true,
-  "llm_api_key": "",
+  "llm_api_key": "sk-eabd49b719f142fc8e9f297a94f56ec4",
   "llm_api_key_env": "",
   "enable_thinking": false,
   "default_max_tokens": 8192,
